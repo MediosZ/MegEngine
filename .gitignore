@@ -13,3 +13,5 @@ __pycache__/
 
 # CMake
 compile_commands.json
+
+build_dir/

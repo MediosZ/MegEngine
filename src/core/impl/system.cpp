@@ -122,12 +122,19 @@ std::pair<size_t, size_t> sys::get_ram_status_bytes() {
     size_t mem_free = vm_stat.free_count * pagesize;
     return {mem_used + mem_free, mem_free};
 #else
+    /*
     struct sysinfo info;
     auto err = sysinfo(&info);
     mgb_assert(!err);
     std::pair<size_t, size_t> ret;
     ret.first = info.totalram * info.mem_unit;
     ret.second = (info.freeram + info.bufferram) * info.mem_unit;
+    return ret;
+    */ 
+   // mock for megjs
+    std::pair<size_t, size_t> ret;
+    ret.first =  2291284480; // 8g 
+    ret.second = 1291284480; // 1g 
     return ret;
 #endif
 }
@@ -145,9 +152,10 @@ bool sys::stderr_ansi_color() {
 }
 #endif
 
-#if MGB_BUILD_SLIM_SERVING || defined(ANDROID) || defined(WIN32) || \
-        defined(IOS) || defined(__APPLE__)
-
+// #if MGB_BUILD_SLIM_SERVING || defined(ANDROID) || defined(WIN32) || \
+//         defined(IOS) || defined(__APPLE__)
+// disable sys functions in megjs
+#if 1
 #pragma message("sys functions disabled on unsupported platforms")
 
 void sys::set_thread_name(const std::string &) {

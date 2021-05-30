@@ -25,7 +25,7 @@
 #endif
 
 #if (defined(__GNUC__) && !defined(__ANDROID__) && !defined(ANDROID) && \
-     !defined(__APPLE__))
+     !defined(__APPLE__) && !defined(__EMSCRIPTEN__))
 #include <cxxabi.h>  // for abi::__forced_unwind
 #define __MGB_HANDLE_FORCED_UNWIND MGB_CATCH(abi::__forced_unwind&, { throw; })
 #else
