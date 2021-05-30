@@ -212,6 +212,7 @@ if(BUILD_MEGJS)
         -s MODULARIZE=1
         -s EXPORT_NAME='MegJSModule'
         -s EXTRA_EXPORTED_RUNTIME_METHODS=['cwrap']
+        --preload-file ${CMAKE_SOURCE_DIR}/data@/
     )
     string(REPLACE ";" " " FLAG_STR "${FLAGS}")
 
