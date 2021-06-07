@@ -220,7 +220,8 @@ TensorWrapper::TensorWrapper(PyObject* args, PyObject* kwargs) {
             throw py::type_error("expect 1 argument");
         }
         m_tensor = t->m_tensor;
-    } else {
+    } 
+    else {
         if (nargs == 1) {
             auto arg0 = PyTuple_GetItem(args, 0);
             // for lazy_eval_tensor
@@ -239,7 +240,8 @@ TensorWrapper::TensorWrapper(PyObject* args, PyObject* kwargs) {
                     throw py::type_error("single argument is not tensor, varnode or devicetensor");
                 }
             }
-        } else {
+        } 
+        else {
             py::detail::loader_life_support life_sup; // FIXME!!!required to cast DType
             if (nargs != 5 && nargs != 6) {
                 throw py::type_error("expect 5 or 6 arguments");

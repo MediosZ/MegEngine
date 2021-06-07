@@ -202,24 +202,10 @@ endif()
 add_library(megengine)
 target_link_libraries(megengine PRIVATE ${MGE_CUDA_LIBS})
 target_link_libraries(megengine PUBLIC megbrain megdnn)
-
-if(BUILD_MEGJS)
-    add_executable(meg)
-    target_link_directories(meg PUBLIC "/usr/local/Cellar/gcc/10.2.0_4/lib/gcc/10/")
-    target_link_libraries(meg PUBLIC megbrain megdnn)
-
-    set(FLAGS
-        -s MODULARIZE=1
-        -s EXPORT_NAME='MegJSModule'
-        -s EXTRA_EXPORTED_RUNTIME_METHODS=['cwrap']
-        --preload-file ${CMAKE_SOURCE_DIR}/data@/
-    )
-    string(REPLACE ";" " " FLAG_STR "${FLAGS}")
-
-    set_target_properties(meg
-    PROPERTIES
-    LINK_FLAGS ${FLAG_STR}
-    )
+if(MGE_BUILD_MEGJS)
+    message(VERBOSE "create a export SHARED lib for megjs use")
+    add_library(megengine_export SHARED)
+    target_link_libraries(megengine_export PUBLIC megbrain megdnn)
 endif()
 if (UNIX AND NOT APPLE)
     target_link_options(megengine PRIVATE -Wl,--no-undefined -Wl,--version-script=${_VER_FILE})

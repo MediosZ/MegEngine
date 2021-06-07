@@ -52,7 +52,7 @@ function cmake_build() {
         -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR \
         -DMGE_BUILD_IMPERATIVE_RT=OFF \
         -DMGE_BUILD_SDK=OFF \
-        -DBUILD_MEGJS=ON \
+        -DMGE_BUILD_MEGJS=ON \
         ${EXTRA_CMAKE_ARGS} \
         $SRC_DIR
 
