@@ -1,4 +1,4 @@
-#include "megbrain/webassembly.h"
+#include "megbrain/imperative/webassembly.h"
 #include "megbrain/serialization/serializer.h"
 #include <iostream>
 using namespace mgb;

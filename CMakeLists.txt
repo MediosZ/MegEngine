@@ -337,7 +337,7 @@ if(MGE_WITH_TEST)
     include(cmake/gtest.cmake)
 endif()
 
-if(MGE_BUILD_IMPERATIVE_RT)
+if(MGE_BUILD_IMPERATIVE_RT OR MGE_BUILD_MEGJS)
     set(CMAKE_CXX_STANDARD 17)
 endif()
 
@@ -353,7 +353,7 @@ if(MGE_INFERENCE_ONLY)
     set(MGE_BUILD_IMPERATIVE_RT OFF)
 endif()
 
-if(MGE_WITH_JIT_MLIR OR MGE_BUILD_IMPERATIVE_RT)
+if(MGE_WITH_JIT_MLIR OR MGE_BUILD_IMPERATIVE_RT OR MGE_BUILD_MEGJS)
     include(cmake/llvm-project.cmake)
 endif()
 
@@ -881,7 +881,7 @@ target_include_directories(mgb_opr_param_defs
 add_dependencies(mgb_opr_param_defs _mgb_opr_param_defs)
 install(TARGETS mgb_opr_param_defs EXPORT ${MGE_EXPORT_TARGETS})
 
-if(MGE_WITH_JIT_MLIR OR MGE_BUILD_IMPERATIVE_RT)
+if(MGE_WITH_JIT_MLIR OR MGE_BUILD_IMPERATIVE_RT OR MGE_BUILD_MEGJS)
     # generate param_defs.td
     set(MGE_GENFILE_DIR ${PROJECT_BINARY_DIR}/src/genfiles)
     set(MGE_GEN_IR_DIR ${PROJECT_BINARY_DIR}/src/core/include/megbrain/ir)

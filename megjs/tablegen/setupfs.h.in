@@ -1,0 +1,16 @@
+#include <emscripten.h>
+#include <iostream>
+#include <stdio.h>
+void setupfs(){
+    EM_ASM(
+        // FS.mount(NODEFS, { root: "@PROJECT_SOURCE_DIR@/third_party/llvm-project/llvm/include/" }, "@PROJECT_SOURCE_DIR@/third_party/llvm-project/llvm/include/");
+        // FS.mount(NODEFS, { root: "@PROJECT_SOURCE_DIR@/third_party/llvm-project/llvm/lib/" }, "@PROJECT_SOURCE_DIR@/third_party/llvm-project/llvm/lib/");
+        // FS.mount(NODEFS, { root: "@PROJECT_SOURCE_DIR@/third_party/llvm-project/mlir/include/mlir/" }, "@PROJECT_SOURCE_DIR@/third_party/llvm-project/mlir/include/mlir/");
+        // FS.mount(NODEFS, { root: "@PROJECT_SOURCE_DIR@/third_party/llvm-project/mlir/lib/" }, "@PROJECT_SOURCE_DIR@/third_party/llvm-project/mlir/lib/");
+        // FS.mount(NODEFS, { root: "@PROJECT_SOURCE_DIR@/third_party/llvm-project/llvm/tools/" }, "@PROJECT_SOURCE_DIR@/third_party/llvm-project/llvm/tools/");
+        // FS.mount(NODEFS, { root: "@PROJECT_SOURCE_DIR@/third_party/llvm-project/llvm/include/llvm/IR/" }, "@PROJECT_SOURCE_DIR@/third_party/llvm-project/llvm/include/llvm/IR/");
+        FS.createPath("/", "@PROJECT_SOURCE_DIR@", true, true);
+        FS.mount(NODEFS, { root: "@PROJECT_SOURCE_DIR@/" }, "@PROJECT_SOURCE_DIR@/");
+        
+    );
+}

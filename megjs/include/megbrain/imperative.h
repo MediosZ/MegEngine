@@ -1,5 +1,5 @@
 /**
- * \file imperative/python/src/tensor.cpp
+ * \file imperative/src/include/megbrain/imperative.h
  * MegEngine is Licensed under the Apache License, Version 2.0 (the "License")
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
@@ -8,3 +8,10 @@
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
+
+#pragma once
+
+#include "megbrain/imperative/physical_tensor.h"
+#include "megbrain/imperative/op_def.h"
+
+// vim: syntax=cpp.doxygen foldmethod=marker foldmarker=f{{{,f}}}

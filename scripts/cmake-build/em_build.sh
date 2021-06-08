@@ -53,11 +53,14 @@ function cmake_build() {
         -DMGE_BUILD_IMPERATIVE_RT=OFF \
         -DMGE_BUILD_SDK=OFF \
         -DMGE_BUILD_MEGJS=ON \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DLLVM_COMPILER_IS_GCC_COMPATIBLE=1 \
+        -Wall \
         ${EXTRA_CMAKE_ARGS} \
         $SRC_DIR
 
     emmake make -j$(nproc)
-    emmake make install/strip
+    # emmake make install/strip
 }
 
 cmake_build $MGE_WITH_CUDA $MGE_INFERENCE_ONLY $BUILD_TYPE
