@@ -1,7 +1,9 @@
 #include "megbrain/imperative/webassembly.h"
 #include "megbrain/serialization/serializer.h"
+#include "./tensor.h"
 #include <iostream>
 using namespace mgb;
+
 
 cg::ComputingGraph::OutputSpecItem make_callback_copy(SymbolVar dev,
                                                       HostTensorND& host) {
@@ -45,7 +47,6 @@ EMSCRIPTEN_KEEPALIVE
 void runProgram(){
     std::cout << "runProgram" << std::endl;
     readfs("test.txt");
-    
     std::unique_ptr<serialization::InputFile> inp_file =
             serialization::InputFile::make_fs("xornet_deploy.mge");
     std::cout << "make fs" << std::endl;
@@ -72,10 +73,6 @@ void runProgram(){
 }
 
 
-float lerp() {
-    return 1234;
-}
-
 class MyClass {
 public:
   MyClass(int x, std::string y)
@@ -99,10 +96,16 @@ private:
   std::string y;
 };
 
+int lerp(MyClass& mc) {
+    return mc.getX();
+}
+
 
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_BINDINGS(something) {
     emscripten::function("lerp", &lerp);
+    emscripten::function("makeTensor", &mgb::imperative::python::makeTensor);
+    emscripten::function("initTensor", &mgb::imperative::python::initTensor);
 }
 
 // Binding code

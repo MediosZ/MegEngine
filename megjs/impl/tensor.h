@@ -16,21 +16,15 @@
 #include "megbrain/imperative/interpreter.h"
 #include <string>
 
-namespace mgb::imperative::python {
-
-template<typename T, typename B = pybind11::object>
-struct ObjectPtr : B {
-    using B::B;
-    T& operator*() {return reinterpret_cast<T&>(*B::ptr());}
-    T* operator->() {return reinterpret_cast<T*>(B::ptr());}
-};
-
-} // namespace mgb::imperative::python
 
 #include "./grad_info.h" // for struct GradInfo
 #include "./trace_info.h" // for struct TraceInfo
 
 namespace mgb::imperative::python {
+
+void initTensor();
+
+void makeTensor();
 
 extern interpreter::Interpreter::Channel* interpreter_for_py;
 
