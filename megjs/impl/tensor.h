@@ -22,10 +22,6 @@
 
 namespace mgb::imperative::python {
 
-void initTensor();
-
-void makeTensor();
-
 extern interpreter::Interpreter::Channel* interpreter_for_py;
 
 class SharedHandle {
@@ -102,7 +98,46 @@ struct Tensor : std::enable_shared_from_this<Tensor>, NonCopyableObj {
         }
         return interpreter_for_py->get_shape(m_handle.get());
     }
+
+    inline HostTensorND value(){
+        return interpreter_for_py->get_value(m_handle.get());
+    }
 };
+
+
+struct ApplyContext {
+    static Tensor::flags_t global_disable;
+
+    Tensor::flags_t flags;
+    std::shared_ptr<OpDef> op;
+    Tensor*const* args;
+    size_t nargs;
+    // PyTypeObject* pytype = nullptr;
+    bool backward = false;
+
+    class scoped_disable : NonCopyableObj {
+        Tensor::flags_t saved_flags;
+
+    public:
+        scoped_disable(Tensor::flags_t flags) : saved_flags(ApplyContext::global_disable) {
+            ApplyContext::global_disable |= flags;
+        }
+        ~scoped_disable() {
+            ApplyContext::global_disable = saved_flags;
+        }
+    };
+};
+
+using apply_result_t = SmallVector<std::shared_ptr<Tensor>, 8>;
+
+apply_result_t apply(ApplyContext& ctx);
+
+
+void initTensor();
+
+std::shared_ptr<Tensor> makeTensor();
+
+void jsapply();
 
 
 }

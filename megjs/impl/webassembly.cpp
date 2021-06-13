@@ -104,8 +104,9 @@ int lerp(MyClass& mc) {
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_BINDINGS(something) {
     emscripten::function("lerp", &lerp);
-    emscripten::function("makeTensor", &mgb::imperative::python::makeTensor);
-    emscripten::function("initTensor", &mgb::imperative::python::initTensor);
+    // emscripten::function("makeTensor", &mgb::imperative::python::makeTensor);
+    // emscripten::function("initTensor", &mgb::imperative::python::initTensor);
+    emscripten::function("jsapply", &mgb::imperative::python::jsapply);
 }
 
 // Binding code
