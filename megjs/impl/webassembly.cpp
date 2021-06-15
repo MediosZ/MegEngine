@@ -30,7 +30,25 @@ void readfs(const char* fname){
 
 
 extern "C"{
-
+/*
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+void registerTensor(const size_t tensor_id, 
+    const size_t size, void *memory_offset,
+    const size_t shapeSize, void *shape_offset) {
+    std::cout << "tensor id: " << tensor_id << " size: "<< size << std::endl;
+    float* data = reinterpret_cast<float*>(memory_offset);
+    for (int i = 0; i < size; i++){
+        std::cout << "data: " << data[i] << std::endl;
+    }
+    int* shape = reinterpret_cast<int*>(shape_offset);
+    for (int i = 0; i < shapeSize; i++){
+        std::cout << "shape: " << shape[i] << std::endl;
+    }
+    // data.emplace(tensor_id, TensorInfo{memory_offset, size});
+}
+*/
 
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_KEEPALIVE
@@ -107,6 +125,7 @@ EMSCRIPTEN_BINDINGS(something) {
     // emscripten::function("makeTensor", &mgb::imperative::python::makeTensor);
     // emscripten::function("initTensor", &mgb::imperative::python::initTensor);
     emscripten::function("jsapply", &mgb::imperative::python::jsapply);
+    // emscripten::function("registerTensor", &mgb::imperative::python::registerTensor);
 }
 
 // Binding code

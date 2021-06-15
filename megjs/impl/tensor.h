@@ -16,7 +16,6 @@
 #include "megbrain/imperative/interpreter.h"
 #include <string>
 
-
 #include "./grad_info.h" // for struct GradInfo
 #include "./trace_info.h" // for struct TraceInfo
 
@@ -132,12 +131,8 @@ using apply_result_t = SmallVector<std::shared_ptr<Tensor>, 8>;
 
 apply_result_t apply(ApplyContext& ctx);
 
-
-void initTensor();
-
 std::shared_ptr<Tensor> makeTensor();
 
 void jsapply();
-
 
 }

@@ -25,7 +25,7 @@ set(FLAGS
     -s MODULARIZE=1
     --bind
     -s EXPORT_NAME='MegJSModule'
-    -s EXTRA_EXPORTED_RUNTIME_METHODS=['cwrap']
+    -s EXTRA_EXPORTED_RUNTIME_METHODS="['cwrap', 'ccall']"
     --preload-file ${CMAKE_SOURCE_DIR}/data@/
 )
 string(REPLACE ";" " " FLAG_STR "${FLAGS}")
