@@ -1,4 +1,5 @@
-file(GLOB_RECURSE SRCS impl/*.cpp include/*.h)
+
+file(GLOB_RECURSE SRCS impl/*.cpp include/*.h js/src/*.cpp js/src/*.h)
 
 file(GLOB_RECURSE ALL_HEADERS
     ${PROJECT_SOURCE_DIR}/src/core/include/*
@@ -7,7 +8,7 @@ file(GLOB_RECURSE ALL_HEADERS
     ${PROJECT_SOURCE_DIR}/src/plugin/include/*
     ${PROJECT_SOURCE_DIR}/dnn/include/*)
 
-    add_subdirectory(tablegen)
+add_subdirectory(tablegen)
 
 add_executable(meg ${SRCS})
 target_include_directories(meg PUBLIC include 
@@ -20,17 +21,22 @@ target_link_libraries(meg PUBLIC megengine_export)
 
 add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/range-v3 ${PROJECT_BINARY_DIR}/third_party/range-v3)
 target_link_libraries(meg PRIVATE range-v3)
-
+target_compile_options(meg PRIVATE "-Wall")
 set(FLAGS
     -s MODULARIZE=1
     --bind
     -s EXPORT_NAME='MegJSModule'
-    -s EXTRA_EXPORTED_RUNTIME_METHODS="['cwrap', 'ccall']"
+    -s EXPORTED_RUNTIME_METHODS="['cwrap', 'ccall']"
     --preload-file ${CMAKE_SOURCE_DIR}/data@/
+    -gseparate-dwarf
+    -s ALLOW_MEMORY_GROWTH=1
+    -s INITIAL_MEMORY=128mb
+    -s TOTAL_STACK=64mb
 )
 string(REPLACE ";" " " FLAG_STR "${FLAGS}")
 
 set_target_properties(meg PROPERTIES
-LINK_FLAGS ${FLAG_STR}
+    LINK_FLAGS ${FLAG_STR}
 )
+
 add_dependencies(meg mgb_opdef)

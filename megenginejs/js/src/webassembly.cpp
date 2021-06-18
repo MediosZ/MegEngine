@@ -1,9 +1,8 @@
-#include "megbrain/imperative/webassembly.h"
+#include "./webassembly.h"
 #include "megbrain/serialization/serializer.h"
 #include "./tensor.h"
 #include <iostream>
 using namespace mgb;
-
 
 cg::ComputingGraph::OutputSpecItem make_callback_copy(SymbolVar dev,
                                                       HostTensorND& host) {
@@ -48,7 +47,7 @@ void registerTensor(const size_t tensor_id,
     }
     // data.emplace(tensor_id, TensorInfo{memory_offset, size});
 }
-*/
+
 
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_KEEPALIVE
@@ -57,7 +56,6 @@ int generate(){
     std::cout << "generate some number: " << 42 << std::endl;
     return 142;
 }
-
 
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_KEEPALIVE
@@ -88,9 +86,10 @@ void runProgram(){
     std::cout << " Predicted: " << predict_ptr[0] << " " << predict_ptr[1]
               << std::endl;
 }
+*/
 }
 
-
+/*
 class MyClass {
 public:
   MyClass(int x, std::string y)
@@ -117,18 +116,20 @@ private:
 int lerp(MyClass& mc) {
     return mc.getX();
 }
-
+*/
 
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_BINDINGS(something) {
-    emscripten::function("lerp", &lerp);
+    // emscripten::function("lerp", &lerp);
     // emscripten::function("makeTensor", &mgb::imperative::python::makeTensor);
     // emscripten::function("initTensor", &mgb::imperative::python::initTensor);
-    emscripten::function("jsapply", &mgb::imperative::python::jsapply);
+    emscripten::function("jsapply", &mgb::imperative::js::jsapply);
+    // emscripten::function("testBackward", &mgb::imperative::js::testBackward);
     // emscripten::function("registerTensor", &mgb::imperative::python::registerTensor);
 }
 
 // Binding code
+/*
 EMSCRIPTEN_BINDINGS(my_class_example) {
   emscripten::class_<MyClass>("MyClass")
     .constructor<int, std::string>()
@@ -137,4 +138,5 @@ EMSCRIPTEN_BINDINGS(my_class_example) {
     .class_function("getStringFromInstance", &MyClass::getStringFromInstance)
     ;
 }
+*/
 #endif

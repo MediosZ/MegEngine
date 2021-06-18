@@ -17,7 +17,7 @@ function usage() {
 
 BUILD_TYPE=Release
 MGE_WITH_CUDA=OFF
-MGE_INFERENCE_ONLY=ON
+MGE_INFERENCE_ONLY=OFF
 MGE_WINDOWS_BUILD_ARCH=x64
 MGE_WINDOWS_BUILD_MARCH=m64
 MGE_ARCH=x86_64
@@ -103,11 +103,13 @@ function cmake_build() {
         -DMGE_INFERENCE_ONLY=$MGE_INFERENCE_ONLY \
         -DMGE_WITH_CUDA=$MGE_WITH_CUDA \
         -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR \
+        -DMGE_BUILD_IMPERATIVE_RT=ON \
+        -DMGE_BUILD_MEGJS=OFF \
         ${EXTRA_CMAKE_ARGS} \
         $SRC_DIR
 
     make -j$(nproc)
-    make install/strip
+    # make install/strip
 }
 
 function windows_env_err() {

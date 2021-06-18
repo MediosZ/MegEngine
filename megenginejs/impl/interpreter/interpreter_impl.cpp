@@ -18,6 +18,7 @@
 #include "megbrain/imperative/utils/to_string.h"
 
 #include "../op_trait.h"
+#include <iostream>
 
 using namespace mgb;
 using namespace imperative;

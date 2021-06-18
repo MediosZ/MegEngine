@@ -40,7 +40,9 @@ llvm::cl::opt<ActionType> action(
 using namespace mlir::tblgen;
 
 int main(int argc, char **argv) {
+#ifdef __EMSCRIPTEN__
     setupfs();
+#endif
     llvm::InitLLVM y(argc, argv);
     llvm::cl::ParseCommandLineOptions(argc, argv);
     if (action == ActionType::CppHeader) {

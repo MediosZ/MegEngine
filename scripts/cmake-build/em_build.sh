@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-BUILD_TYPE=Release
+BUILD_TYPE=Debug
 MGE_WITH_CUDA=OFF
 MGE_INFERENCE_ONLY=OFF
 MGE_ARCH=naive

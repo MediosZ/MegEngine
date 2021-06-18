@@ -11,7 +11,7 @@
 
 #include "megbrain/utils/metahelper.h"
 
-namespace mgb::imperative::python::intrusive_list {
+namespace mgb::imperative::js::intrusive_list {
 
 // copy policy
 struct after_t {};

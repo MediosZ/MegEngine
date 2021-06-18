@@ -11,7 +11,7 @@
 
 #include "inttypes.h"
 
-namespace mgb::imperative::python {
+namespace mgb::imperative::js {
 
 struct TraceInfo {
     int64_t mixin_handle = -1;

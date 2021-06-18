@@ -13,7 +13,7 @@
 
 #include "./intrusive_list.h"
 
-namespace mgb::imperative::python {
+namespace mgb::imperative::js {
 
 struct GradFn;
 struct GradSlot;

@@ -18,10 +18,10 @@
 
 #include "./grad_info.h" // for struct GradInfo
 #include "./trace_info.h" // for struct TraceInfo
+#include <iostream>
+namespace mgb::imperative::js {
 
-namespace mgb::imperative::python {
-
-extern interpreter::Interpreter::Channel* interpreter_for_py;
+extern interpreter::Interpreter::Channel* interpreter_for_js;
 
 class SharedHandle {
     using Handle = interpreter::Interpreter::Handle;
@@ -31,7 +31,7 @@ class SharedHandle {
 public:
     inline explicit SharedHandle(Handle handle) : holder(handle, [](auto* h){
         if (h) {
-            interpreter_for_py->del(h);
+            interpreter_for_js->del(h);
         }
     }) {}
     SharedHandle(const SharedHandle&) = default;
@@ -83,23 +83,23 @@ struct Tensor : std::enable_shared_from_this<Tensor>, NonCopyableObj {
         if (m_var) {
             return m_var->dtype();
         }
-        return interpreter_for_py->get_dtype(m_handle.get());
+        return interpreter_for_js->get_dtype(m_handle.get());
     }
     inline CompNode comp_node() {
         if (m_var) {
             return m_var->comp_node();
         }
-        return interpreter_for_py->get_device(m_handle.get());
+        return interpreter_for_js->get_device(m_handle.get());
     }
     inline TensorShape shape() {
         if (m_var) {
             return m_var->shape();
         }
-        return interpreter_for_py->get_shape(m_handle.get());
+        return interpreter_for_js->get_shape(m_handle.get());
     }
 
     inline HostTensorND value(){
-        return interpreter_for_py->get_value(m_handle.get());
+        return interpreter_for_js->get_value(m_handle.get());
     }
 };
 
@@ -131,8 +131,70 @@ using apply_result_t = SmallVector<std::shared_ptr<Tensor>, 8>;
 
 apply_result_t apply(ApplyContext& ctx);
 
+template <typename T>
+decltype(auto) resolve_arrow(T&& p) {
+    if constexpr (std::is_pointer_v<std::remove_reference_t<T>>) {
+        auto* ret = p;
+        return ret;
+    } else {
+        auto probe = [](auto&& p) -> decltype(p.operator->()) {};
+        if constexpr (std::is_invocable_v<decltype(probe), decltype(p)>) {
+            return resolve_arrow(p.operator->());
+        } else {
+            return std::forward<T>(p);
+        }
+    }
+}
+
+template <typename... Args>
+constexpr bool is_all_tensor_ptr = (... && std::is_same_v<decltype(resolve_arrow(std::declval<Args>())), Tensor*>);
+
+extern bool is_tracing; // FIXME: should use ApplyContext::global_enable
+extern bool is_compiled;
+
+template <typename... Args, std::enable_if_t<is_all_tensor_ptr<Args...>, int> = 0>
+apply_result_t apply(std::shared_ptr<OpDef> op, Args&&... args) {
+    ApplyContext ctx;
+    Tensor* arg_arr[] = {resolve_arrow(args)...};
+    ctx.flags = (0 | ... | args->m_flags);
+    ctx.flags |= is_tracing ? Tensor::Flags::TRACE : 0;
+    ctx.args = arg_arr;
+    ctx.nargs = sizeof...(args);
+    ctx.op = std::move(op);
+    return apply(ctx);
+}
+
+template <typename T>
+auto apply(std::shared_ptr<OpDef> op, T&& tensors)
+        -> std::enable_if_t<std::is_same_v<decltype(resolve_arrow(tensors[0])), Tensor*>,
+                            apply_result_t> {
+    ApplyContext ctx;
+    ctx.op = std::move(op);
+    ctx.flags = is_tracing ? Tensor::Flags::TRACE : 0;
+    ctx.nargs = tensors.size();
+    Tensor* args[ctx.nargs];
+    ctx.args = args;
+    for (size_t i = 0; i < ctx.nargs; ++i) {
+        args[i] = resolve_arrow(tensors[i]);
+        ctx.flags |= args[i]->m_flags;
+    }
+    return apply(ctx);
+}
+
+inline auto apply(std::shared_ptr<OpDef> op, Tensor*const* args, size_t nargs) {
+    ApplyContext ctx;
+    ctx.op = std::move(op);
+    ctx.flags = is_tracing ? Tensor::Flags::TRACE : 0;
+    ctx.nargs = nargs;
+    ctx.args = args;
+    for (size_t i = 0; i < nargs; ++i) {
+        ctx.flags |= args[i]->m_flags;
+    }
+    return apply(ctx);
+}
 std::shared_ptr<Tensor> makeTensor();
 
 void jsapply();
+// void jsbackward();
 
 }
