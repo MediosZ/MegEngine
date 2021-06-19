@@ -135,9 +135,9 @@ void default_log_handler(LogLevel level,
     }
     {
         MGB_LOCK_GUARD(mtx);
-        fprintf(stdout, hdr_fmt, timestr, func, file, line, warn_reminder);
-        vfprintf(stdout, fmt, ap);
-        fputc('\n', stdout);
+        fprintf(stderr, hdr_fmt, timestr, func, file, line, warn_reminder);
+        vfprintf(stderr, fmt, ap);
+        fputc('\n', stderr);
     }
 
 #ifdef __ANDROID__
