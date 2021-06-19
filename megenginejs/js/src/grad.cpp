@@ -122,7 +122,11 @@ struct BackwardGraphWithClosure {
         } else {
             closure.reserve(count);
         }
-
+        for (size_t i = 0; i < ctx.nargs; ++i) {
+            if (save_for_backward[i]) {
+                closure.push_back(ctx.args[i]->shared_from_this());
+            }
+        }
         for (size_t i = 0; i < outputs.size(); ++i) {
             if (save_for_backward[ctx.nargs + i]) {
                 closure.push_back(outputs[i]);
@@ -140,6 +144,7 @@ struct BackwardGraphWithClosure {
         bool null_grad = false;
         for (size_t i = 0; i < grads.size(); ++i) {
             if (backward_graph->save_for_backward[grad_mask_offset + i]) {
+
                 if (grads[i]) {
                     if (null_grad) {
                         // PyErr_SetString(PyExc_NotImplementedError, "report to devs");
@@ -153,7 +158,6 @@ struct BackwardGraphWithClosure {
             }
         }
         if (null_grad) return;
-
         auto igrads = apply(backward_graph->backward, args, nargs);
         auto&& it = igrads.begin();
         for (auto [i, p] : views::enumerate(backward_graph->input_has_grad)) {
@@ -340,7 +344,6 @@ apply_result_t apply_grad(ApplyContext& ctx) {
     if (!grad_key) {
         return apply(ctx);
     }
-
     GradFnHelper grad_fn_holder;
     auto outputs = [&]() {
         auto _ = scoped_disable(Flags::GRAD);
@@ -372,7 +375,6 @@ apply_result_t apply_grad(ApplyContext& ctx) {
     grad_fn->key = grad_key;
     grad_fn->slots.resize(outputs.size());
     grad_fn->dsts.reserve(ctx.nargs);
-
     std::visit([&](auto& backward) {
         using T = std::decay_t<decltype(backward)>;
         if constexpr (std::is_same_v<T, std::monostate>) {
@@ -407,7 +409,6 @@ apply_result_t apply_grad(ApplyContext& ctx) {
 
     // record forward history
     grad_key->tape.emplace_back(grad_fn);
-
     return outputs;
 }
 
@@ -463,12 +464,13 @@ void GradKey::backward(std::vector<Tensor*> tensors, std::vector<Tensor*> grads)
 
     // this GradKey is marked inactive here
     active = false;
+    /*
     struct CleanupGuard {
         GradKey* owner;
         CleanupGuard(GradKey* this_) : owner(this_) {}
         ~CleanupGuard() {owner->cleanup();}
     } _cleanup_guard(this);
-
+    */
     if (tape.empty()) return;
     /*
     BackwardContext bctx;
@@ -476,6 +478,7 @@ void GradKey::backward(std::vector<Tensor*> tensors, std::vector<Tensor*> grads)
         bctx.pytype = Py_TYPE(grads[0]->self().ptr());
     }
     */
+    // be careful with grads
     for (size_t i = 0; i < tensors.size(); ++i) {
         auto& grad_info = tensors[i]->m_grad_info;
         if (grad_info.grad_fn && grad_info.grad_fn->key.lock().get() == this) {
@@ -501,11 +504,11 @@ void GradKey::backward(std::vector<Tensor*> tensors, std::vector<Tensor*> grads)
             if constexpr (std::is_same_v<T, std::monostate>) {
                 mgb_assert(0);
             } else {
+                // Tensor* grads
                 auto&& grads = views::transform(grad_fn->slots, [](auto&& slot) {return slot.grad.get();});
                 backward(std::forward<decltype(grads)>(grads), grad_receiver);
             }
         }, grad_fn->backward);
-
         for (auto&& dst : grad_fn->dsts) {
             if (!dst.grad_fn) continue;
             if (!dst.grad_fn->in_ref_keeper) {
@@ -514,12 +517,17 @@ void GradKey::backward(std::vector<Tensor*> tensors, std::vector<Tensor*> grads)
                 dst.grad_fn->in_ref_keeper = true;
                 ref_keeper.push_back(dst.grad_fn);
             }
-            /*
-            if (!dst.producer_record.next && dst->callback && dst->grad) {
+            
+            if (!dst.producer_record.next /* && dst->callback*/ && dst->grad) {
                 // I'm the last grad producer, invoke callback
-                dst->callback(bctx.wrap_tensor(dst->grad));
+                // dst->callback(bctx.wrap_tensor(dst->grad));
+                HostTensorND gradTensor = dst->grad->value();
+                auto t_out_grad = gradTensor.ptr<float>();
+                for(int i = 0; i < 5; i++){
+                    mgb_log("Grad<%d>: %f",i, t_out_grad[i]);
+                }
             }
-            */
+            
         }
         grad_fn->clear();
     } // finish tape loop

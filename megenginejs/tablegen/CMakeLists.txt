@@ -10,10 +10,18 @@ set(FLAGS
     -lnodefs.js
 )
 string(REPLACE ";" " " FLAG_STR "${FLAGS}")
+if(EMSCRIPTEN_ROOT_PATH)
 set_target_properties(${TABLE_TARGET} PROPERTIES
 CXX_STANDARD 17
 LINK_FLAGS ${FLAG_STR}
 )
+else()
+set_target_properties(${TABLE_TARGET} PROPERTIES
+CXX_STANDARD 17
+)
+endif()
+
+
 set(MGB_TABLEGEN_EXE ${TABLE_TARGET})
 
 

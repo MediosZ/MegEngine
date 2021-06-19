@@ -1,10 +1,48 @@
 #!/usr/bin/env bash
 set -e
-BUILD_TYPE=Debug
+BUILD_TYPE=Release
 MGE_WITH_CUDA=OFF
 MGE_INFERENCE_ONLY=OFF
 MGE_ARCH=naive
 REMOVE_OLD_BUILD=false
+
+
+while getopts "rhdctm" arg
+do
+    case $arg in
+        d)
+            echo "Build with Debug mode"
+            BUILD_TYPE=Debug
+            ;;
+        c)
+            echo "Build with CUDA"
+            MGE_WITH_CUDA=ON
+            ;;
+        t)
+            echo "Build with training mode"
+            MGE_INFERENCE_ONLY=OFF
+            ;;
+        h)
+            echo "show usage"
+            usage
+            ;;
+        r)
+            echo "config REMOVE_OLD_BUILD=true"
+            REMOVE_OLD_BUILD=true
+            ;;
+        m)
+            echo "build for m32(only valid use for windows)"
+            MGE_WINDOWS_BUILD_ARCH=x86
+            MGE_WINDOWS_BUILD_MARCH=m32
+            MGE_ARCH=i386
+            ;;
+        ?)
+            echo "unkonw argument"
+            usage
+            ;;
+    esac
+done
+
 echo "EXTRA_CMAKE_ARGS: ${EXTRA_CMAKE_ARGS}"
 echo "------------------------------------"
 echo "build config summary:"
@@ -29,7 +67,7 @@ SRC_DIR=$($READLINK -f "`dirname $0`/../../")
 source $SRC_DIR/scripts/cmake-build/utils/utils.sh
 
 function cmake_build() {
-    BUILD_DIR=$SRC_DIR/build_dir/emscripten/build
+    BUILD_DIR=$SRC_DIR/build_dir/emscriptenc/build
     INSTALL_DIR=$BUILD_DIR/../install
     MGE_WITH_CUDA=$1
     MGE_INFERENCE_ONLY=$2
@@ -45,7 +83,7 @@ function cmake_build() {
     mkdir -p $BUILD_DIR
     mkdir -p $INSTALL_DIR
     cd $BUILD_DIR
-    emcmake cmake \
+    cmake \
         -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
         -DMGE_INFERENCE_ONLY=$MGE_INFERENCE_ONLY \
         -DMGE_WITH_CUDA=$MGE_WITH_CUDA \
@@ -59,7 +97,7 @@ function cmake_build() {
         ${EXTRA_CMAKE_ARGS} \
         $SRC_DIR
 
-    emmake make -j$(nproc)
+    make -j$(nproc)
     # emmake make install/strip
 }
 

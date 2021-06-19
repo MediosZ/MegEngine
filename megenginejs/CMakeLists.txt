@@ -30,13 +30,16 @@ set(FLAGS
     --preload-file ${CMAKE_SOURCE_DIR}/data@/
     -gseparate-dwarf
     -s ALLOW_MEMORY_GROWTH=1
-    -s INITIAL_MEMORY=128mb
-    -s TOTAL_STACK=64mb
+    -s INITIAL_MEMORY=256mb
+    -s TOTAL_STACK=128mb
+    -s NO_DISABLE_EXCEPTION_CATCHING
 )
 string(REPLACE ";" " " FLAG_STR "${FLAGS}")
-
+if(EMSCRIPTEN_ROOT_PATH)
 set_target_properties(meg PROPERTIES
     LINK_FLAGS ${FLAG_STR}
 )
+endif()
+
 
 add_dependencies(meg mgb_opdef)
