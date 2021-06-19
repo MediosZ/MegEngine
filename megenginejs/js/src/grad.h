@@ -113,8 +113,8 @@ public:
 
     Maker maker(ApplyContext& ctx) {return {*this, ctx};}
 };
-
-using GradRuleFn = std::function<apply_result_t(ApplyContext&, CustomBackward::Maker&)>;
+using grad_override_result = std::pair<bool, apply_result_t>;
+using GradRuleFn = std::function<grad_override_result(ApplyContext&, CustomBackward::Maker&)>;
 
 std::unordered_map<Typeinfo*, GradRuleFn>& grad_rule_registry();
 

@@ -271,6 +271,8 @@ void* getOffset(void* id){
 EMSCRIPTEN_KEEPALIVE
 #endif
 void jsbackward(){
+    std::cerr << "stderr tets" << std::endl;
+    mgb::set_log_level(mgb::LogLevel::INFO);
     mgb_log("Test Backward");
     auto gradKey = std::make_shared<GradKey>();
     ApplyContext ctx;
@@ -296,7 +298,6 @@ void jsbackward(){
 
     tensors[0] = pt1.get();
     tensors[1] = pt2.get();
-
     auto res = apply(ctx);
     HostTensorND outTensor = res[0]->value();
     mgb_log("Forward:");

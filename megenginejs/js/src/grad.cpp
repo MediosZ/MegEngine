@@ -354,14 +354,15 @@ apply_result_t apply_grad(ApplyContext& ctx) {
         */
         auto&& registry = grad_rule_registry();
         auto&& it = registry.find(ctx.op->dyn_typeinfo());
-        if (it != registry.end()) {
+         if (it != registry.end()) {
             auto&& maker = grad_fn_holder.emplace<CustomBackward>().maker(ctx);
-            try {
-                auto ret = it->second(ctx, maker);
-                maker.finalize();
-                return ret;
-            } catch (GradRuleFallback&) {
+            auto ret = it->second(ctx, maker);
+            if(ret.first){
                 grad_fn_holder.reset();
+            }
+            else{
+                maker.finalize();
+                return ret.second;
             }
         }
         return backward_graph_grad_rule(ctx, grad_fn_holder);
@@ -524,6 +525,7 @@ void GradKey::backward(std::vector<Tensor*> tensors, std::vector<Tensor*> grads)
                 HostTensorND gradTensor = dst->grad->value();
                 auto t_out_grad = gradTensor.ptr<float>();
                 for(int i = 0; i < 5; i++){
+                    // std::cout << t_out_grad[i] << std::endl;
                     mgb_log("Grad<%d>: %f",i, t_out_grad[i]);
                 }
             }

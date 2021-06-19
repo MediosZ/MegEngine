@@ -67,7 +67,7 @@ SRC_DIR=$($READLINK -f "`dirname $0`/../../")
 source $SRC_DIR/scripts/cmake-build/utils/utils.sh
 
 function cmake_build() {
-    BUILD_DIR=$SRC_DIR/build_dir/emscriptenc/build
+    BUILD_DIR=$SRC_DIR/build_dir/emscripten/build
     INSTALL_DIR=$BUILD_DIR/../install
     MGE_WITH_CUDA=$1
     MGE_INFERENCE_ONLY=$2
@@ -83,7 +83,7 @@ function cmake_build() {
     mkdir -p $BUILD_DIR
     mkdir -p $INSTALL_DIR
     cd $BUILD_DIR
-    cmake \
+    emcmake cmake \
         -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
         -DMGE_INFERENCE_ONLY=$MGE_INFERENCE_ONLY \
         -DMGE_WITH_CUDA=$MGE_WITH_CUDA \
@@ -92,14 +92,14 @@ function cmake_build() {
         -DMGE_BUILD_SDK=OFF \
         -DMGE_BUILD_MEGJS=ON \
         -DBUILD_SHARED_LIBS=OFF \
+        -DMGE_ENABLE_LOGGING=ON \
         -DLLVM_COMPILER_IS_GCC_COMPATIBLE=1 \
         -Wall \
         ${EXTRA_CMAKE_ARGS} \
         $SRC_DIR
 
-    make -j$(nproc)
+    emmake make -j$(nproc)
     # emmake make install/strip
 }
 
 cmake_build $MGE_WITH_CUDA $MGE_INFERENCE_ONLY $BUILD_TYPE
-

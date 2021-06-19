@@ -44,7 +44,7 @@ std::shared_ptr<Tensor> make_tensor(CompNode cn, Tensor* shape, float v = 0) {
     return res;
 }
 
-apply_result_t elemwise_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
+grad_override_result elemwise_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
     auto& op = ctx.op->cast_final_safe<Elemwise>();
     if (op.mode == Elemwise::Mode::ADD) {
         mgb_assert(ctx.nargs == 2);
@@ -69,12 +69,14 @@ apply_result_t elemwise_grad_rule(ApplyContext& ctx, CustomBackward::Maker& make
             }
             return ret;
         });
-        return apply(ctx);
+        return std::make_pair<bool, apply_result_t>(false, apply(ctx));
+        // return apply(ctx);
     }
-    throw GradRuleFallback();
+    return std::make_pair<bool, apply_result_t>(true, apply_result_t());
+    //throw GradRuleFallback();
 }
 
-apply_result_t reshape_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
+grad_override_result reshape_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
     mgb_assert(ctx.nargs == 2);
     std::array<std::shared_ptr<Tensor>, 2> input_shapes;
     for (size_t i = 0; i < 2; ++i) {
@@ -97,10 +99,11 @@ apply_result_t reshape_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker
         }
         return ret;
     });
-    return apply(ctx);
+    return std::make_pair<bool, apply_result_t>(false, apply(ctx));
+    //return apply(ctx);
 }
 
-apply_result_t subtensor_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
+grad_override_result subtensor_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
     auto&& op = ctx.op->cast_final_safe<Subtensor>();
     auto&& grad_op = SetSubtensor::make(op.items);
     SmallVector<std::shared_ptr<Tensor>> inputs;
@@ -127,10 +130,11 @@ apply_result_t subtensor_grad_rule(ApplyContext& ctx, CustomBackward::Maker& mak
         }
         return ret;
     });
-    return apply(ctx);
+    return std::make_pair<bool, apply_result_t>(false, apply(ctx));
+    // return apply(ctx);
 }
 
-apply_result_t indexingMultiAxisVec_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
+grad_override_result indexingMultiAxisVec_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
     auto&& op = ctx.op->cast_final_safe<IndexingMultiAxisVec>();
     auto&& grad_op = IndexingSetMultiAxisVec::make(op.items);
     SmallVector<std::shared_ptr<Tensor>> inputs;
@@ -157,10 +161,11 @@ apply_result_t indexingMultiAxisVec_grad_rule(ApplyContext& ctx, CustomBackward:
         }
         return ret;
     });
-    return apply(ctx);
+    return std::make_pair<bool, apply_result_t>(false, apply(ctx));
+    // return apply(ctx);
 }
 
-apply_result_t reduce_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
+grad_override_result reduce_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
     auto& op = ctx.op->cast_final_safe<Reduce>();
     if (op.mode == Reduce::Mode::SUM) {
         mgb_assert(ctx.nargs == 1);
@@ -178,12 +183,14 @@ apply_result_t reduce_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker)
             }
             return ret;
         });
-        return apply(ctx);
+        return std::make_pair<bool, apply_result_t>(false, apply(ctx));
+        // return apply(ctx);
     }
-    throw GradRuleFallback();
+    return std::make_pair<bool, apply_result_t>(true, apply_result_t());
+    // throw GradRuleFallback();
 }
 
-apply_result_t addAxis_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
+grad_override_result addAxis_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
     auto&& op = ctx.op->cast_final_safe<AddAxis>();
     mgb_assert(ctx.nargs == 1);
     bool flag = input_requires_grad(ctx, 0);
@@ -199,10 +206,11 @@ apply_result_t addAxis_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker
         }
         return ret;
     });
-    return apply(ctx);
+    return std::make_pair<bool, apply_result_t>(false, apply(ctx));
+    // return apply(ctx);
 }
 
-apply_result_t removeAxis_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
+grad_override_result removeAxis_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
     auto&& op = ctx.op->cast_final_safe<RemoveAxis>();
     mgb_assert(ctx.nargs == 1);
     bool flag = input_requires_grad(ctx, 0);
@@ -218,7 +226,8 @@ apply_result_t removeAxis_grad_rule(ApplyContext& ctx, CustomBackward::Maker& ma
         }
         return ret;
     });
-    return apply(ctx);
+    return std::make_pair<bool, apply_result_t>(false, apply(ctx));
+    // return apply(ctx);
 }
 
 struct Init {
