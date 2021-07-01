@@ -217,26 +217,15 @@ void initTensor(){
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_KEEPALIVE
 #endif
-void* registerTensor(const size_t tensor_id, 
-    const size_t size, void* memory_offset,
-    const size_t shapeSize, size_t* shape_offset) {
-    float* data = reinterpret_cast<float*>(memory_offset);
-    
+void* registerTensor(const size_t tensor_id, const size_t shapeSize, size_t* shape_offset) {
     SmallVector<size_t> shapeVec(shapeSize);
-    int* inshape = reinterpret_cast<int*>(shape_offset);
     for (int i = 0; i < shapeSize; i++){
-        shapeVec[i] = inshape[i];
+        shapeVec[i] = shape_offset[i];
     }
-    auto cn = CompNode::load("xpu0");
     TensorShape shape = TensorShape(shapeVec);
+    
+    auto cn = CompNode::load("xpu0");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape);
-    
-    auto ptr = ret->ptr<float>();
-    for (size_t i = 0, it = shape.total_nr_elems(); i < it; ++ i) {
-        ptr[i] = data[i];
-    }
-    
-
     auto handle = interpreter_for_js->put(*ret, true);
     return handle;
 }
@@ -250,9 +239,7 @@ void* add(void* aId, void* bId){
     SmallVector<mgb::imperative::interpreter::Interpreter::Handle> handleVec(2);
     handleVec[0] = a;
     handleVec[1] = b;
-
     auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::ADD));
-    
     auto outhandles = interpreter_for_js->apply_op(op, handleVec);
     return outhandles[0];
 }
@@ -271,7 +258,6 @@ void* getOffset(void* id){
 EMSCRIPTEN_KEEPALIVE
 #endif
 void jsbackward(){
-    std::cerr << "stderr tets" << std::endl;
     mgb::set_log_level(mgb::LogLevel::INFO);
     mgb_log("Test Backward");
     auto gradKey = std::make_shared<GradKey>();
@@ -415,6 +401,7 @@ int main(){
     mgb_log("main function");
     mgb::set_log_level(mgb::LogLevel::INFO);
     mgb::imperative::js::initTensor();
+    // mgb::imperative::js::jsapply();
     mgb::imperative::js::jsbackward();
 }
 
