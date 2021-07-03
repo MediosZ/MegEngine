@@ -93,6 +93,11 @@ std::shared_ptr<Tensor> get_shape(Tensor* x) {
     return js::apply(op, x)[0];
 }
 
+std::shared_ptr<Tensor> gen_randn(Tensor* x) {
+    static auto op = GaussianRNG::make();
+    return js::apply(op, x)[0];
+}
+
 std::shared_ptr<Tensor> make_tensor_like(Tensor* other, float v = 0) {
     HostTensorND scalar{other->comp_node(), {{1}, dtype::Float32()}};
     scalar.ptr<float>()[0] = v;
@@ -111,7 +116,7 @@ std::shared_ptr<Tensor> makeTensor(){
 
     mgb::imperative::interpreter::Interpreter::Handle handle;
     DType dtype = DType::from_enum(DTypeEnum::Float32);
-    CompNode cn = CompNode::load("xpux");
+    CompNode cn = CompNode::load("c pux");
     
     TensorLayout layout;
     layout.dtype = dtype;
@@ -131,8 +136,19 @@ std::shared_ptr<Tensor> makeTensor(){
     return tensor;
 }
 
+std::shared_ptr<HostTensorND> makeTNDI(const TensorShape& shape){
+    auto cn = CompNode::load("cpu0");
+    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
+
+    auto ptr = ret->ptr<int32_t>();
+    for (size_t i = 0, it = shape.total_nr_elems(); i < it; ++ i) {
+        ptr[i] = 2 + i;
+    }
+    return ret;
+}
+
 std::shared_ptr<HostTensorND> makeTND(const TensorShape& shape, bool grad = false){
-    auto cn = CompNode::load("xpu0");
+    auto cn = CompNode::load("cpu0");
     // TensorShape shape = TensorShape{3};
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape);
 
@@ -151,7 +167,7 @@ std::shared_ptr<HostTensorND> makeTND(const TensorShape& shape, bool grad = fals
 }
 
 HostTensorND* makeTNDP(const TensorShape& shape, bool grad = false){
-    auto cn = CompNode::load("xpu0");
+    auto cn = CompNode::load("cpu0");
     // TensorShape shape = TensorShape{3};
     // std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape);
     HostTensorND* ret = new HostTensorND(cn, shape);
@@ -224,10 +240,30 @@ void* registerTensor(const size_t tensor_id, const size_t shapeSize, size_t* sha
     }
     TensorShape shape = TensorShape(shapeVec);
     
-    auto cn = CompNode::load("xpu0");
+    auto cn = CompNode::load("cpu0");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape);
     auto handle = interpreter_for_js->put(*ret, true);
     return handle;
+}
+
+
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+void* randn(const size_t shapeSize, size_t* shape_offset){
+    auto cn = CompNode::load("cpu0");
+    TensorShape shape = TensorShape{shapeSize};
+    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
+    auto ptr = ret->ptr<int32_t>();
+    for (size_t i = 0, it = shape.total_nr_elems(); i < it; ++ i) {
+        ptr[i] = shape_offset[i];
+    }
+    auto handle = interpreter_for_js->put(*ret, true);
+    SmallVector<mgb::imperative::interpreter::Interpreter::Handle> handleVec(1);
+    handleVec[0] = handle;
+    auto op = std::shared_ptr<OpDef>(GaussianRNG::make());
+    auto outhandles = interpreter_for_js->apply_op(op, handleVec); 
+    return outhandles[0];
 }
 
 #ifdef __EMSCRIPTEN__
@@ -240,6 +276,20 @@ void* add(void* aId, void* bId){
     handleVec[0] = a;
     handleVec[1] = b;
     auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::ADD));
+    auto outhandles = interpreter_for_js->apply_op(op, handleVec);
+    return outhandles[0];
+}
+
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+void* mul(void* aId, void* bId){
+    auto a = reinterpret_cast<mgb::imperative::interpreter::Interpreter::Handle>(aId);
+    auto b = reinterpret_cast<mgb::imperative::interpreter::Interpreter::Handle>(bId);
+    SmallVector<mgb::imperative::interpreter::Interpreter::Handle> handleVec(2);
+    handleVec[0] = a;
+    handleVec[1] = b;
+    auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::MUL));
     auto outhandles = interpreter_for_js->apply_op(op, handleVec);
     return outhandles[0];
 }
@@ -307,91 +357,75 @@ void jsbackward(){
     mgb_log("Backward:");
     gradKey->backward(ts, gs);
     mgb_log("done!");
+    auto sop = GetVarShape::make();
+    auto sha = js::apply(sop, pt1.get())[0];
+    auto t_out_shape = sha->value().ptr<int32_t>();
+    for(int i = 0; i < sha->shape().total_nr_elems(); i++){
+        mgb_log("Shape: %d", t_out_shape[i]);
+    }
+
+    interpreter_for_js->sync();
     
 }
+
+void testRand(){
+    mgb_log("Test Rand");
+    size_t s[2] = {3, 4};
+    auto cn = CompNode::load("cpux");
+    TensorShape shape = TensorShape{2};
+    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
+    auto ptr = ret->ptr<int32_t>();
+    for (size_t i = 0, it = shape.total_nr_elems(); i < it; ++ i) {
+        ptr[i] = s[i];
+    }
+    auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::ADD));
+    // auto op = std::shared_ptr<OpDef>(GaussianRNG::make());
+    auto handle = interpreter_for_js->put(*ret, true);
+    auto tensor = std::make_shared<Tensor>(handle);
+    auto out = js::apply(op, tensor.get(), tensor.get())[0];
+
+/*     auto t_out_value = out->value().ptr<float>();
+    for(int i = 0; i < out->shape().total_nr_elems(); i++){
+        std::cout << t_out_value[i] << std::endl;
+    } */
+
+
+    interpreter_for_js->sync();
+
+}
+
 
 } // extern C
 
 
 void jsapply() {
+    //auto op = Elemwise::make(Elemwise::Mode::ADD);
+    auto op = std::shared_ptr<OpDef>(GaussianRNG::make());
+    auto t1 = makeTNDI({2});
+    // auto t2 = makeTNDI({2});
+    auto handle1 = interpreter_for_js->put(*t1, false);
+    // auto handle2 = interpreter_for_js->put(*t2, false);
 
-    // initTensor();
-    // if (kwnames && PyTuple_GET_SIZE(kwnames)) {
-    //     PyErr_SetString(PyExc_TypeError, "keyword argument not allowed");
-    //     return nullptr;
-    // }
-    // auto* op = args[0];
-    // auto cn = CompNode::load("xpu0");
-    // LogicalTensorDesc desc = {TensorLayout(dtype::Float32()), cn};
-    
-    auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::ADD));
-    // auto bg = OpDef::make_backward_graph(*op, {desc, desc}, {true, true}, {true});
-    // auto obg = OptimizedBackwardGraphResult(bg);
-
-    auto t1 = makeTND({5});
-    auto t2 = makeTND({5});
-    // auto t3 = makeTND({5});
-    /*
-    
-    std::cout << "creating tensor" << std::endl;
-    auto a_tn = mgb::imperative::Tensor::make(*t1);
-    auto b_tn = mgb::imperative::Tensor::make(*t2);
-    auto dc_tn = mgb::imperative::Tensor::make(*t3);
-
-    std::cout << "before apply" << std::endl;
-    // auto c_tn = OpDef::apply_on_physical_tensor(*op, {a_tn, b_tn})[0];
-
-
-    auto inputs = SmallVector<TensorPtr>{a_tn, b_tn};
-    SmallVector<DeviceTensorND> inp_tensornds(inputs.size());
-    for (unsigned i = 0; i < inputs.size(); ++i){
-        inp_tensornds[i] = inputs[i]->dev_tensor();
-    }
-    SmallVector<DeviceTensorND> oup_tensornds = {{inp_tensornds[0].comp_node(), inp_tensornds[0].dtype()}};
-    // apply_on_device_tensornd(def, inp_tensornds, &oup_tensornds);
-    // return {Tensor::make(oup_tensornds[0])};
-    OpDef::apply_on_device_tensornd(*op, inp_tensornds, &oup_tensornds);
-    auto c_tn = mgb::imperative::Tensor::make(oup_tensornds[0]);
-
-
-    std::cout << "after apply" << std::endl;
-    auto out = c_tn->get_value();
-    auto out_data = out.ptr<float>();
-    for(int i = 0; i < 5; i++){
-        std::cout << out_data[i] << std::endl;
-    }
-
-    auto backward_graph_inputs = prepare_backward_graph_inputs<SmallVector<TensorPtr>>(bg, {a_tn, b_tn}, {c_tn}, {dc_tn});
-    auto grads = expand_grads(bg, OpDef::apply_on_physical_tensor(*bg.backward, backward_graph_inputs));
-
-    auto precomp = OpDef::apply_on_physical_tensor(*obg.precomp, {a_tn, b_tn, c_tn});
-
-    auto backward_inputs = prepare_optimized_backward_inputs<SmallVector<TensorPtr>>(obg, precomp, {a_tn, b_tn}, {c_tn}, {dc_tn});
-    auto grads2 = expand_grads(obg, OpDef::apply_on_physical_tensor(*obg.backward, backward_inputs));
-    std::cout << "grads: " << grads[0]->get_value().ptr<float>()[0] << " and " << grads2[0]->get_value().ptr<float>()[0] << std::endl;
-    std::cout << "grads: " << grads[1]->get_value().ptr<float>()[0] << " and " << grads2[1]->get_value().ptr<float>()[0] << std::endl;
-    std::cout << "success." << std::endl;
-    */
-    auto handle1 = interpreter_for_js->put(*t1, true);
-    auto handle2 = interpreter_for_js->put(*t2, true);
-    SmallVector<mgb::imperative::interpreter::Interpreter::Handle> handleVec(2);
-    // handleVec.push_back(handle1);
-    // handleVec.push_back(handle2);
+    SmallVector<mgb::imperative::interpreter::Interpreter::Handle> handleVec(1);
     handleVec[0] = handle1;
-    handleVec[1] = handle2;
-    std::cout << "before do apply" << std::endl;
+    // handleVec[1] = handle2;
+    
     auto outhandles = interpreter_for_js->apply_op(op, handleVec);
-    std::cout << "output handle" << std::endl;
-    HostTensorND outTensor = interpreter_for_js->get_value(outhandles[0]);
-    // auto tout = mgb::imperative::Tensor::make(outTensor);
-    // auto t_out = tout->get_value();
+    // std::cout << getOffset(outhandles[0]) << std::endl;
+    // be careful with get_value!
+    auto outTensor = interpreter_for_js->get_value(outhandles[0]);
+    // you should delete it manually. but why?
+    interpreter_for_js->del(outhandles[0]);
+
     auto t_out_data = outTensor.ptr<float>();
-    for(int i = 0; i < 5; i++){
+    for(int i = 0; i < 6; i++){
         std::cout << t_out_data[i] << std::endl;
     }
-    
+
+    interpreter_for_js->sync();
 
 }
+
 
 } // namespace
 
@@ -401,8 +435,10 @@ int main(){
     mgb_log("main function");
     mgb::set_log_level(mgb::LogLevel::INFO);
     mgb::imperative::js::initTensor();
-    // mgb::imperative::js::jsapply();
-    mgb::imperative::js::jsbackward();
+    mgb::imperative::js::jsapply();
+    // mgb::imperative::js::jsbackward();
+    // mgb::imperative::js::testRand();
+
 }
 
 #endif
