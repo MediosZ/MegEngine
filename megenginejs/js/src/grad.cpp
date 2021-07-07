@@ -194,9 +194,10 @@ struct GradProducerRecord : intrusive_list::Node<GradProducerRecord> {
     // GradProducerRecord& operator=(GradProducerRecord&) = default;
     // GradProducerRecord& operator=(GradProducerRecord&&) = default;
 };
+
 struct GradSlot {
     std::shared_ptr<Tensor> grad;
-    // py::object callback;
+    CallbackFunc callback;
     GradProducerRecord::head_t producer_head;
 };
 
@@ -414,7 +415,7 @@ apply_result_t apply_grad(ApplyContext& ctx) {
 }
 
 //!  GradKey is weakly refered by tensor->m_grad_info.grad_fn->key after attach
-void GradKey::attach(Tensor* tensor /*, pybind11::object callback*/) {
+void GradKey::attach(Tensor* tensor, CallbackFunc&& callback /*, pybind11::object callback*/) {
     if (!active) {
         throw std::runtime_error("grad key finalized");
     }
@@ -440,7 +441,7 @@ void GradKey::attach(Tensor* tensor /*, pybind11::object callback*/) {
         tensor->m_grad_info.insert_after(free_vars_head);
         tensor->m_flags |= Flags::GRAD;
     }
-    // tensor->m_grad_info.grad_fn->slots[0].callback = std::move(callback);
+    tensor->m_grad_info.grad_fn->slots[0].callback = std::move(callback);
 }
 
 template<typename T>
@@ -519,15 +520,10 @@ void GradKey::backward(std::vector<Tensor*> tensors, std::vector<Tensor*> grads)
                 ref_keeper.push_back(dst.grad_fn);
             }
             
-            if (!dst.producer_record.next /* && dst->callback*/ && dst->grad) {
+            if (!dst.producer_record.next && dst->callback && dst->grad) {
                 // I'm the last grad producer, invoke callback
                 // dst->callback(bctx.wrap_tensor(dst->grad));
-                HostTensorND gradTensor = dst->grad->value();
-                auto t_out_grad = gradTensor.ptr<float>();
-                for(int i = 0; i < dst->grad->shape().total_nr_elems(); i++){
-                    // std::cout << t_out_grad[i] << std::endl;
-                    mgb_log("Grad<%d>: %f",i, t_out_grad[i]);
-                }
+                dst->callback(dst->grad);
             }
             
         }

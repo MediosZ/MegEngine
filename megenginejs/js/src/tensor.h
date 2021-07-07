@@ -103,6 +103,16 @@ struct Tensor : std::enable_shared_from_this<Tensor>, NonCopyableObj {
     }
 };
 
+using CallbackFunc = std::function<void(std::shared_ptr<Tensor>)>;
+
+struct TensorWrapper{
+    TensorWrapper(std::shared_ptr<Tensor> tensor) : _tensor(tensor){}
+
+    std::shared_ptr<Tensor> _tensor;
+    std::shared_ptr<Tensor> _grad;
+
+};
+
 
 struct ApplyContext {
     static Tensor::flags_t global_disable;

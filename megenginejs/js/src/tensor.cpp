@@ -240,8 +240,7 @@ EMSCRIPTEN_KEEPALIVE
 void jsbackward(){
     mgb::set_log_level(mgb::LogLevel::INFO);
     mgb_log("Test Backward");
-    auto engine = Engine::inst();
-    engine.startScope();
+    auto gradKey = std::make_shared<GradKey>();
     ApplyContext ctx;
     ctx.flags = 0;
     ctx.op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::SIN));
@@ -257,8 +256,22 @@ void jsbackward(){
     auto t2 = interpreter_for_js->put(*ht2, true);
     std::shared_ptr<Tensor> pt1 = std::make_shared<Tensor>(t1);
     std::shared_ptr<Tensor> pt2 = std::make_shared<Tensor>(t2);
-    engine.attach(pt1.get());
-    engine.attach(pt2.get());
+    gradKey->attach(pt1.get(), [&](std::shared_ptr<Tensor> grad){
+        HostTensorND gradTensor = grad->value();
+        auto t_out_grad = gradTensor.ptr<float>();
+        for(int i = 0; i < grad->shape().total_nr_elems(); i++){
+            // std::cout << t_out_grad[i] << std::endl;
+            mgb_log("Grad<%d>: %f",i, t_out_grad[i]);
+        }
+    });
+    gradKey->attach(pt2.get(), [&](std::shared_ptr<Tensor> grad){
+        HostTensorND gradTensor = grad->value();
+        auto t_out_grad = gradTensor.ptr<float>();
+        for(int i = 0; i < grad->shape().total_nr_elems(); i++){
+            // std::cout << t_out_grad[i] << std::endl;
+            mgb_log("Grad<%d>: %f",i, t_out_grad[i]);
+        }
+    });
     
     ctx.flags |= pt1->m_flags;
     ctx.flags |= pt2->m_flags;
@@ -286,10 +299,9 @@ void jsbackward(){
     Tensor* pdy = new Tensor(dy);
     gs.emplace_back(pdy);
     mgb_log("Backward:");
-    engine.backward(ts, gs);
+    gradKey->backward(ts, gs);
     mgb_log("done!");
     interpreter_for_js->sync();
-    engine.endScope();
 }
 
 std::shared_ptr<Tensor> randTensor(std::initializer_list<int> init_list){
@@ -343,8 +355,8 @@ void testJSBack(){
     auto handle2 = interpreter_for_js->put(*makeTND({5}), true);
     std::shared_ptr<Tensor> t1 = std::make_shared<Tensor>(handle1);
     std::shared_ptr<Tensor> t2 = std::make_shared<Tensor>(handle2); */
-    auto t1 = randTensor({2,3});
-    auto t2 = randTensor({2,3});
+    auto t1 = randTensor({4});
+    auto t2 = randTensor({4});
     mgb_log("createTensor");
 
     auto t1id = wrapper->registerTensor(t1);
@@ -355,13 +367,16 @@ void testJSBack(){
     wrapper->attach(t1id);
     wrapper->attach(t2id);
     auto outid = wrapper->mul(t1id, t2id);
-/*     auto t = wrapper->getTensor(outid);
-    auto t_out_value = t->value().ptr<float>();
-    for(int i = 0; i < t->shape().total_nr_elems(); i++){
-        std::cout << t_out_value[i] << std::endl;
-    } */
+
     wrapper->backward(outid);
+    mgb_log("after backward");
     wrapper->endScope();
+
+    auto t = wrapper->getTensor(t1id);
+    auto t_out_value = t->_grad->value().ptr<float>();
+    for(int i = 0; i < t->_grad->shape().total_nr_elems(); i++){
+        std::cout << t_out_value[i] << std::endl;
+    }
     interpreter_for_js->sync();
     mgb_log("exit");
 }

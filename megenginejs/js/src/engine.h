@@ -17,20 +17,20 @@ public:
 
     void startScope();
     void endScope();
-    void attach(Tensor* t);
+    void attach(Tensor* t, CallbackFunc&& callback);
     void backward(std::vector<Tensor*> tensors, std::vector<Tensor*> grads);
 
-    void insertTensor(int id, std::shared_ptr<Tensor> tensor){
+    void insertTensor(int id, std::shared_ptr<TensorWrapper> tensor){
         tensor_registry->insert({id, tensor});
     }
 
-    std::shared_ptr<Tensor> getTensor(int id){
+    std::shared_ptr<TensorWrapper> getTensor(int id){
         return tensor_registry->at(id);
     }
 
 private:
     std::shared_ptr<GradKey> gradkey;
-    std::shared_ptr<std::unordered_map<int, std::shared_ptr<Tensor>>> tensor_registry;
+    std::shared_ptr<std::unordered_map<int, std::shared_ptr<TensorWrapper>>> tensor_registry;
     bool inScope;
 };
 
@@ -54,7 +54,8 @@ public:
     int registerTensor(std::shared_ptr<Tensor> t);
     #endif
     int32_t getTensorOffset(const int id);
-    std::shared_ptr<Tensor> getTensor(int id){
+    int32_t getGradOffset(const int id);
+    std::shared_ptr<TensorWrapper> getTensor(int id){
         return _engine.getTensor(id);
     }
 

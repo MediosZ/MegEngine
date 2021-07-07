@@ -28,7 +28,7 @@ struct GradKey : std::enable_shared_from_this<GradKey>, NonCopyableObj {
 
     ~GradKey();
 
-    void attach(Tensor* tensor);
+    void attach(Tensor* tensor, CallbackFunc&& callback);
     void backward(std::vector<Tensor*>, std::vector<Tensor*>);
     void cleanup();
 };
