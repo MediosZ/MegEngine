@@ -2,6 +2,7 @@
 #include "megbrain/serialization/serializer.h"
 #include "./tensor.h"
 #include <iostream>
+#include <string>
 using namespace mgb;
 
 cg::ComputingGraph::OutputSpecItem make_callback_copy(SymbolVar dev,
@@ -118,6 +119,22 @@ int lerp(MyClass& mc) {
 }
 */
 
+class PointerTensor{
+    public:
+    PointerTensor(std::string name) : _name(name){
+
+    }
+
+    void* passPointer(void* pointer){
+        std::cout << "receive raw pointer: " << std::endl;
+    }
+
+    private:
+    std::string _name;
+};
+
+
+
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_BINDINGS(something) {
     // emscripten::function("lerp", &lerp);
@@ -129,6 +146,12 @@ EMSCRIPTEN_BINDINGS(something) {
 }
 
 // Binding code
+EMSCRIPTEN_BINDINGS(pointer_test) {
+    emscripten::class_<PointerTensor>("PointerTensor")
+        .constructor<std::string>()
+        .function("passPointer", &PointerTensor::passPointer, emscripten::allow_raw_pointers())
+        ;
+}
 /*
 EMSCRIPTEN_BINDINGS(my_class_example) {
   emscripten::class_<MyClass>("MyClass")

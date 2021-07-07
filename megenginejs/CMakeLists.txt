@@ -30,7 +30,7 @@ set(FLAGS
     --preload-file ${CMAKE_SOURCE_DIR}/data@/
     -gseparate-dwarf
     -s ALLOW_MEMORY_GROWTH=1
-    -s INITIAL_MEMORY=256mb
+    -s INITIAL_MEMORY=512mb
     -s TOTAL_STACK=128mb
     -s DISABLE_EXCEPTION_CATCHING=0
 )

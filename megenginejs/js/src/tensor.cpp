@@ -18,6 +18,7 @@
 #include "./webassembly.h"
 #include "./tensor.h"
 #include "./grad.h"
+#include "./engine.h"
 #include <iostream>
 #include <vector>
 
@@ -76,10 +77,11 @@ T prepare_optimized_backward_inputs(const mgb::imperative::OptimizedBackwardGrap
     return ret;
 }
 
-
+using namespace mgb::imperative::interpreter;
 namespace mgb::imperative::js {
 
 interpreter::Interpreter::Channel* interpreter_for_js;
+
 
 bool is_tracing = false;
 
@@ -98,10 +100,10 @@ std::shared_ptr<Tensor> gen_randn(Tensor* x) {
     return js::apply(op, x)[0];
 }
 
-std::shared_ptr<Tensor> make_tensor_like(Tensor* other, float v = 0) {
+std::shared_ptr<Tensor> make_tensor_like(Tensor* other, float v) {
     HostTensorND scalar{other->comp_node(), {{1}, dtype::Float32()}};
     scalar.ptr<float>()[0] = v;
-    interpreter::Interpreter::Handle handle = interpreter_for_js->put(scalar, false);
+    Interpreter::Handle handle = interpreter_for_js->put(scalar, false);
     auto&& t = std::make_shared<Tensor>(handle);
     auto res = broadcast_to(t.get(), get_shape(other).get());
     return res;
@@ -114,9 +116,9 @@ std::shared_ptr<Tensor> makeTensor(){
     data[1] = 0.2;
     data[3] = 0.3;
 
-    mgb::imperative::interpreter::Interpreter::Handle handle;
+    Interpreter::Handle handle;
     DType dtype = DType::from_enum(DTypeEnum::Float32);
-    CompNode cn = CompNode::load("c pux");
+    CompNode cn = CompNode::load("cpux");
     
     TensorLayout layout;
     layout.dtype = dtype;
@@ -160,7 +162,7 @@ std::shared_ptr<HostTensorND> makeTND(const TensorShape& shape, bool grad = fals
     }
     else{
         for (size_t i = 0, it = shape.total_nr_elems(); i < it; ++ i) {
-            ptr[i] = 0.1 * i;
+            ptr[i] = 0.1 * (i+1);
         }
     }
     return ret;
@@ -202,7 +204,7 @@ apply_result_t apply(ApplyContext& ctx) {
         return apply_grad(ctx);
     }
 
-    SmallVector<interpreter::Interpreter::Handle> handles(ctx.nargs);
+    SmallVector<Interpreter::Handle> handles(ctx.nargs);
     for (size_t i = 0; i < ctx.nargs; ++i) {
         handles[i] = ctx.args[i]->m_handle.get();
     }
@@ -225,84 +227,12 @@ EMSCRIPTEN_KEEPALIVE
 #endif
 void initTensor(){
     imperative::Tensor::static_initialize();
-    static auto sl_interpreter_for_js = mgb::imperative::interpreter::Interpreter::inst().create_channel();
+    static auto sl_interpreter_for_js = Interpreter::inst().create_channel();
     interpreter_for_js = sl_interpreter_for_js.get();
+
+    mgb::set_log_level(mgb::LogLevel::INFO);
 }
 
-
-#ifdef __EMSCRIPTEN__
-EMSCRIPTEN_KEEPALIVE
-#endif
-void* registerTensor(const size_t tensor_id, const size_t shapeSize, size_t* shape_offset) {
-    SmallVector<size_t> shapeVec(shapeSize);
-    for (int i = 0; i < shapeSize; i++){
-        shapeVec[i] = shape_offset[i];
-    }
-    TensorShape shape = TensorShape(shapeVec);
-    
-    auto cn = CompNode::load("cpu0");
-    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape);
-    auto handle = interpreter_for_js->put(*ret, true);
-    return handle;
-}
-
-
-#ifdef __EMSCRIPTEN__
-EMSCRIPTEN_KEEPALIVE
-#endif
-void* randn(const size_t shapeSize, size_t* shape_offset){
-    auto cn = CompNode::load("cpu0");
-    TensorShape shape = TensorShape{shapeSize};
-    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
-    auto ptr = ret->ptr<int32_t>();
-    for (size_t i = 0, it = shape.total_nr_elems(); i < it; ++ i) {
-        ptr[i] = shape_offset[i];
-    }
-    auto handle = interpreter_for_js->put(*ret, true);
-    SmallVector<mgb::imperative::interpreter::Interpreter::Handle> handleVec(1);
-    handleVec[0] = handle;
-    auto op = std::shared_ptr<OpDef>(GaussianRNG::make());
-    auto outhandles = interpreter_for_js->apply_op(op, handleVec); 
-    return outhandles[0];
-}
-
-#ifdef __EMSCRIPTEN__
-EMSCRIPTEN_KEEPALIVE
-#endif
-void* add(void* aId, void* bId){
-    auto a = reinterpret_cast<mgb::imperative::interpreter::Interpreter::Handle>(aId);
-    auto b = reinterpret_cast<mgb::imperative::interpreter::Interpreter::Handle>(bId);
-    SmallVector<mgb::imperative::interpreter::Interpreter::Handle> handleVec(2);
-    handleVec[0] = a;
-    handleVec[1] = b;
-    auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::ADD));
-    auto outhandles = interpreter_for_js->apply_op(op, handleVec);
-    return outhandles[0];
-}
-
-#ifdef __EMSCRIPTEN__
-EMSCRIPTEN_KEEPALIVE
-#endif
-void* mul(void* aId, void* bId){
-    auto a = reinterpret_cast<mgb::imperative::interpreter::Interpreter::Handle>(aId);
-    auto b = reinterpret_cast<mgb::imperative::interpreter::Interpreter::Handle>(bId);
-    SmallVector<mgb::imperative::interpreter::Interpreter::Handle> handleVec(2);
-    handleVec[0] = a;
-    handleVec[1] = b;
-    auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::MUL));
-    auto outhandles = interpreter_for_js->apply_op(op, handleVec);
-    return outhandles[0];
-}
-
-#ifdef __EMSCRIPTEN__
-EMSCRIPTEN_KEEPALIVE
-#endif
-void* getOffset(void* id){
-   auto handle = reinterpret_cast<mgb::imperative::interpreter::Interpreter::Handle>(id);
-   auto tensor = interpreter_for_js->get_value(handle);
-   auto ptr = tensor.ptr<float>();
-   return ptr;
-}
 
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_KEEPALIVE
@@ -310,13 +240,14 @@ EMSCRIPTEN_KEEPALIVE
 void jsbackward(){
     mgb::set_log_level(mgb::LogLevel::INFO);
     mgb_log("Test Backward");
-    auto gradKey = std::make_shared<GradKey>();
+    auto engine = Engine::inst();
+    engine.startScope();
     ApplyContext ctx;
     ctx.flags = 0;
-    ctx.op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::MUL));
+    ctx.op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::SIN));
     SmallVector<Tensor*, 64> tensors(2);
     ctx.args = &tensors[0];
-    ctx.nargs = 2;
+    ctx.nargs = 1;
     if (ctx.op->same_type<BackwardGraph>()) {
         ctx.backward = true;
     }
@@ -326,14 +257,14 @@ void jsbackward(){
     auto t2 = interpreter_for_js->put(*ht2, true);
     std::shared_ptr<Tensor> pt1 = std::make_shared<Tensor>(t1);
     std::shared_ptr<Tensor> pt2 = std::make_shared<Tensor>(t2);
-    gradKey->attach(pt1.get());
-    gradKey->attach(pt2.get());
+    engine.attach(pt1.get());
+    engine.attach(pt2.get());
     
     ctx.flags |= pt1->m_flags;
     ctx.flags |= pt2->m_flags;
 
     tensors[0] = pt1.get();
-    tensors[1] = pt2.get();
+    // tensors[1] = pt2.get();
     auto res = apply(ctx);
     HostTensorND outTensor = res[0]->value();
     mgb_log("Forward:");
@@ -355,17 +286,28 @@ void jsbackward(){
     Tensor* pdy = new Tensor(dy);
     gs.emplace_back(pdy);
     mgb_log("Backward:");
-    gradKey->backward(ts, gs);
+    engine.backward(ts, gs);
     mgb_log("done!");
-    auto sop = GetVarShape::make();
-    auto sha = js::apply(sop, pt1.get())[0];
-    auto t_out_shape = sha->value().ptr<int32_t>();
-    for(int i = 0; i < sha->shape().total_nr_elems(); i++){
-        mgb_log("Shape: %d", t_out_shape[i]);
-    }
-
     interpreter_for_js->sync();
-    
+    engine.endScope();
+}
+
+std::shared_ptr<Tensor> randTensor(std::initializer_list<int> init_list){
+    TensorShape shape = TensorShape{init_list.size()};
+    auto cn = CompNode::load("cpu0");
+    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
+    auto ptr = ret->ptr<int32_t>();
+    int count{0};
+    for (auto i : init_list) {
+        ptr[count] = i;
+        ++count;
+    }
+    auto op = std::shared_ptr<OpDef>(GaussianRNG::make(rand()));
+    auto handle = interpreter_for_js->put(*ret, true);
+    auto tensor = std::make_shared<Tensor>(handle);
+    auto result = js::apply(op, tensor.get())[0];
+    interpreter_for_js->sync();
+    return result;
 }
 
 void testRand(){
@@ -394,7 +336,36 @@ void testRand(){
 
 }
 
+#ifndef __EMSCRIPTEN__
+void testJSBack(){
+    auto wrapper = std::make_shared<EngineWrapper>();
+/*     auto handle1 = interpreter_for_js->put(*makeTND({5}), true);
+    auto handle2 = interpreter_for_js->put(*makeTND({5}), true);
+    std::shared_ptr<Tensor> t1 = std::make_shared<Tensor>(handle1);
+    std::shared_ptr<Tensor> t2 = std::make_shared<Tensor>(handle2); */
+    auto t1 = randTensor({2,3});
+    auto t2 = randTensor({2,3});
+    mgb_log("createTensor");
 
+    auto t1id = wrapper->registerTensor(t1);
+    auto t2id = wrapper->registerTensor(t2);
+    mgb_log("register tensor %d, %d", t1id, t2id);
+
+    wrapper->startScope();
+    wrapper->attach(t1id);
+    wrapper->attach(t2id);
+    auto outid = wrapper->mul(t1id, t2id);
+/*     auto t = wrapper->getTensor(outid);
+    auto t_out_value = t->value().ptr<float>();
+    for(int i = 0; i < t->shape().total_nr_elems(); i++){
+        std::cout << t_out_value[i] << std::endl;
+    } */
+    wrapper->backward(outid);
+    wrapper->endScope();
+    interpreter_for_js->sync();
+    mgb_log("exit");
+}
+#endif
 } // extern C
 
 
@@ -406,7 +377,7 @@ void jsapply() {
     auto handle1 = interpreter_for_js->put(*t1, false);
     // auto handle2 = interpreter_for_js->put(*t2, false);
 
-    SmallVector<mgb::imperative::interpreter::Interpreter::Handle> handleVec(1);
+    SmallVector<Interpreter::Handle> handleVec(1);
     handleVec[0] = handle1;
     // handleVec[1] = handle2;
     
@@ -426,6 +397,29 @@ void jsapply() {
 
 }
 
+int32_t readTensor(int32_t raw_handle){
+    auto handle = reinterpret_cast<Interpreter::Handle>(raw_handle);
+    auto outTensor = interpreter_for_js->get_value(handle);
+    std::cout << handle << std::endl;
+    auto t_out_data = outTensor.ptr<float>();
+    for(int i = 0; i < 5; i++){
+        mgb_log("Value: %f", t_out_data[i]);
+    }
+    return raw_handle;
+
+}
+
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_BINDINGS(tensor) {
+    // emscripten::function("lerp", &lerp);
+    // emscripten::function("makeTensor", &mgb::imperative::python::makeTensor);
+    //emscripten::function("initTensor", &mgb::imperative::python::initTensor);
+    emscripten::function("jsapply", &mgb::imperative::js::jsapply);
+    // emscripten::function("testBackward", &mgb::imperative::js::testBackward);
+    // emscripten::function("registerTensor", &mgb::imperative::python::registerTensor);
+}
+#endif
+
 
 } // namespace
 
@@ -435,8 +429,9 @@ int main(){
     mgb_log("main function");
     mgb::set_log_level(mgb::LogLevel::INFO);
     mgb::imperative::js::initTensor();
-    mgb::imperative::js::jsapply();
+    // mgb::imperative::js::jsapply();
     // mgb::imperative::js::jsbackward();
+    mgb::imperative::js::testJSBack();
     // mgb::imperative::js::testRand();
 
 }

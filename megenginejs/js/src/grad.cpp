@@ -524,7 +524,7 @@ void GradKey::backward(std::vector<Tensor*> tensors, std::vector<Tensor*> grads)
                 // dst->callback(bctx.wrap_tensor(dst->grad));
                 HostTensorND gradTensor = dst->grad->value();
                 auto t_out_grad = gradTensor.ptr<float>();
-                for(int i = 0; i < 5; i++){
+                for(int i = 0; i < dst->grad->shape().total_nr_elems(); i++){
                     // std::cout << t_out_grad[i] << std::endl;
                     mgb_log("Grad<%d>: %f",i, t_out_grad[i]);
                 }
@@ -546,6 +546,7 @@ void GradKey::cleanup() {
 
 GradKey::~GradKey() {
     cleanup();
+    mgb_log("Delete GradKey");
 }
 
 std::unordered_map<Typeinfo*, GradRuleFn>& grad_rule_registry() {

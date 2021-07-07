@@ -38,16 +38,24 @@ READLINK=greadlink
 SRC_DIR=$($READLINK -f "`dirname $0`/../../")
 source $SRC_DIR/scripts/cmake-build/utils/utils.sh
 
-BUILD_DIR=$SRC_DIR/build_dir/emscripten/build
+ROOT_DIR=$SRC_DIR/build_dir/emscripten
+
 CMAKE="emcmake cmake"
 MAKE="emmake make"
 if [ $MGE_BUILD_PC = "ON" ];then
-    BUILD_DIR=$SRC_DIR/build_dir/emscriptenc/build
+    ROOT_DIR=$SRC_DIR/build_dir/emscriptenc
     CMAKE="cmake"
     MAKE="make"
 fi
 
-INSTALL_DIR=$BUILD_DIR/../install
+if [ $BUILD_TYPE = "Debug" ];then
+    ROOT_DIR=${ROOT_DIR}d
+fi
+
+BUILD_DIR=$ROOT_DIR/build
+INSTALL_DIR=$ROOT_DIR/install
+
+
 echo "build dir: $BUILD_DIR"
 echo "install dir: $INSTALL_DIR"
 echo "build type: $BUILD_TYPE"
