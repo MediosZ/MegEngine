@@ -12,7 +12,7 @@ Engine::Engine(){
     mgb_log("Create Engine");
     inScope = true;
     #ifndef __EMSCRIPTEN__
-    tensor_registry = std::make_shared<std::unordered_map<int, std::shared_ptr<TensorWrapper>>>();
+    tensor_registry = std::make_shared<std::unordered_map<int, std::shared_ptr<Tensor>>>();
     #endif
 }
 
@@ -40,13 +40,26 @@ void Engine::backward(std::vector<Tensor*> tensors, std::vector<Tensor*> grads){
     gradkey->backward(tensors, grads);
 }
 
+int Engine::registerTensor(std::shared_ptr<Tensor> tensor){
+    auto id = nextTensorID++;
+    insertTensor(id, tensor);
+    return id;
+}
+
+EngineWrapper::EngineWrapper(){
+    #ifndef __EMSCRIPTEN__
+    _tensor_wrapper_registry = std::make_shared<std::unordered_map<int, std::shared_ptr<TensorWrapper>>>();
+    #endif
+}
 
 void EngineWrapper::attach(int32_t id){
+    auto tensor_wrapper = getTensorWrapper(id);
     auto tensor = _engine.getTensor(id);
     // std::cout << tensor << std::endl;
-    _engine.attach(tensor->_tensor.get(), [tensor](std::shared_ptr<Tensor> grad){
+    _engine.attach(tensor.get(), [tensor_wrapper, this](std::shared_ptr<Tensor> grad){
         // std::cout << tensor << std::endl;
-        tensor->_grad = std::move(grad);
+        auto id = _engine.registerTensor(std::move(grad));
+        tensor_wrapper->_grad = id;
 /*         std::cout <<tensor->_grad.get() << std::endl;
         HostTensorND gradTensor = tensor->_grad->value();
         auto t_out_grad = gradTensor.ptr<float>();
@@ -69,23 +82,22 @@ HostTensorND makeGrad(const TensorShape& shape){
     return ret;
 }
 
-int EngineWrapper::backward(int32_t id){
+void EngineWrapper::backward(int32_t id){
     auto tensor = _engine.getTensor(id);
-    auto dy = interpreter_for_js->put(makeGrad(tensor->_tensor->shape()), true);
+    auto dy = interpreter_for_js->put(makeGrad(tensor->shape()), true);
     Tensor* pdy = new Tensor(dy);
     // auto dy = make_tensor_like(tensor->_tensor.get(), 1);
     // auto dy_id = nextTensorID++;
     // _engine.insertTensor(dy_id, std::make_shared<TensorWrapper>(dy));
-    std::vector<Tensor*> ts{tensor->_tensor.get()};
+    std::vector<Tensor*> ts{tensor.get()};
     std::vector<Tensor*> gs{pdy};
     _engine.backward(ts, gs);
     mgb_log("Backward Finish");
-    return nextTensorID;
 }
 
 
 #ifdef __EMSCRIPTEN__
-int EngineWrapper::registerTensor(const int id, const emscripten::val &v, const emscripten::val &data){
+int EngineWrapper::registerTensor(const emscripten::val &v, const emscripten::val &data){
     SmallVector<size_t> rv;
     const auto l = v["length"].as<unsigned>();
     rv.resize(l);
@@ -109,13 +121,13 @@ int EngineWrapper::registerTensor(const int id, const emscripten::val &v, const 
 
     auto handle = interpreter_for_js->put(*ret, true);
     auto tensor = std::make_shared<Tensor>(handle);
-    _engine.insertTensor(id, std::make_shared<TensorWrapper>(tensor));
+    auto id = _engine.registerTensor(tensor);
+    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
     // mgb_log("register Tensor %d", id);
-    nextTensorID = id + 1;
     return id;
 }
 
-int EngineWrapper::randn(const int id, const emscripten::val &v){
+int EngineWrapper::randn(const emscripten::val &v){
     SmallVector<size_t> rv;
     const auto l = v["length"].as<unsigned>();
     rv.resize(l);
@@ -136,21 +148,22 @@ int EngineWrapper::randn(const int id, const emscripten::val &v){
 
     // generate rand Tensor
     auto result = js::apply(op, tensor.get())[0];
-    _engine.insertTensor(id, std::make_shared<TensorWrapper>(result));
+    auto id = _engine.registerTensor(result);
+    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
     // mgb_log("register Tensor %d", id);
-    nextTensorID = id + 1;
     return id;
 }
 #else 
 int EngineWrapper::registerTensor(std::shared_ptr<Tensor> t){
-    _engine.insertTensor(nextTensorID, std::make_shared<TensorWrapper>(t));
-    return nextTensorID++;
+    auto id = _engine.registerTensor(t);
+    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
+    return id;
 }
 #endif
 
 int32_t EngineWrapper::getTensorOffset(const int id){
     auto tensor = _engine.getTensor(id);
-    auto ptr = tensor->_tensor->value().ptr<float>();
+    auto ptr = tensor->value().ptr<float>();
     #ifdef __EMSCRIPTEN__
     return reinterpret_cast<int32_t>(ptr);
     #else 
@@ -159,9 +172,10 @@ int32_t EngineWrapper::getTensorOffset(const int id){
 }
 
 int32_t EngineWrapper::getGradOffset(const int id){
-    auto tensor = _engine.getTensor(id);
+    auto tensor_wrapper = getTensorWrapper(id);
+    auto grad = _engine.getTensor(tensor_wrapper->_grad);
     // std::cout << tensor->_grad.get() << " " << tensor->_tensor.get() << std::endl;
-    auto ptr = tensor->_grad->value().ptr<float>();
+    auto ptr = grad->value().ptr<float>();
     #ifdef __EMSCRIPTEN__
     return reinterpret_cast<int32_t>(ptr);
     #else 
@@ -180,9 +194,9 @@ int EngineWrapper::mul(int a, int b){
     auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::MUL));
     auto tensorA = _engine.getTensor(a);
     auto tensorB = _engine.getTensor(b);
-    auto outTensor = js::apply(op, tensorA->_tensor.get(), tensorB->_tensor.get())[0];
-    auto id = nextTensorID++;
-    _engine.insertTensor(id, std::make_shared<TensorWrapper>(outTensor));
+    auto outTensor = js::apply(op, tensorA.get(), tensorB.get())[0];
+    auto id = _engine.registerTensor(outTensor);
+    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
     return id;
 }
 
@@ -190,9 +204,9 @@ int EngineWrapper::add(int a, int b){
     auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::ADD));
     auto tensorA = _engine.getTensor(a);
     auto tensorB = _engine.getTensor(b);
-    auto outTensor = js::apply(op, tensorA->_tensor.get(), tensorB->_tensor.get())[0];
-    auto id = nextTensorID++;
-    _engine.insertTensor(id, std::make_shared<TensorWrapper>(outTensor));
+    auto outTensor = js::apply(op, tensorA.get(), tensorB.get())[0];
+    auto id = _engine.registerTensor(outTensor);
+    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});;
     return id;
 }
 
@@ -200,18 +214,18 @@ int EngineWrapper::sub(int a, int b){
     auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::SUB));
     auto tensorA = _engine.getTensor(a);
     auto tensorB = _engine.getTensor(b);
-    auto outTensor = js::apply(op, tensorA->_tensor.get(), tensorB->_tensor.get())[0];
-    auto id = nextTensorID++;
-    _engine.insertTensor(id, std::make_shared<TensorWrapper>(outTensor));
+    auto outTensor = js::apply(op, tensorA.get(), tensorB.get())[0];
+    auto id = _engine.registerTensor(outTensor);
+    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
     return id;
 }
 
 int EngineWrapper::sin(int a){
     auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::SIN));
     auto tensorA = _engine.getTensor(a);
-    auto outTensor = js::apply(op, tensorA->_tensor.get())[0];
-    auto id = nextTensorID++;
-    _engine.insertTensor(id, std::make_shared<TensorWrapper>(outTensor));
+    auto outTensor = js::apply(op, tensorA.get())[0];
+    auto id = _engine.registerTensor(outTensor);
+    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
     return id; 
 }
 
@@ -219,9 +233,9 @@ int EngineWrapper::sin(int a){
 int EngineWrapper::cos(int a){
     auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::COS));
     auto tensorA = _engine.getTensor(a);
-    auto outTensor = js::apply(op, tensorA->_tensor.get())[0];
-    auto id = nextTensorID++;
-    _engine.insertTensor(id, std::make_shared<TensorWrapper>(outTensor));
+    auto outTensor = js::apply(op, tensorA.get())[0];
+    auto id = _engine.registerTensor(outTensor);
+    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
     return id; 
 }
 

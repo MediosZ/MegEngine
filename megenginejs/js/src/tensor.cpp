@@ -372,9 +372,10 @@ void testJSBack(){
     mgb_log("after backward");
     wrapper->endScope();
 
-    auto t = wrapper->getTensor(t1id);
-    auto t_out_value = t->_grad->value().ptr<float>();
-    for(int i = 0; i < t->_grad->shape().total_nr_elems(); i++){
+    auto tw= wrapper->getTensorWrapper(t1id);
+    auto grad = wrapper->getTensor(tw->_grad);
+    auto t_out_value = grad->value().ptr<float>();
+    for(int i = 0; i < grad->shape().total_nr_elems(); i++){
         std::cout << t_out_value[i] << std::endl;
     }
     interpreter_for_js->sync();

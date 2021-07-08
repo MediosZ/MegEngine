@@ -20,23 +20,27 @@ public:
     void attach(Tensor* t, CallbackFunc&& callback);
     void backward(std::vector<Tensor*> tensors, std::vector<Tensor*> grads);
 
-    void insertTensor(int id, std::shared_ptr<TensorWrapper> tensor){
+    void insertTensor(int id, std::shared_ptr<Tensor> tensor){
         tensor_registry->insert({id, tensor});
     }
 
-    std::shared_ptr<TensorWrapper> getTensor(int id){
+    int registerTensor(std::shared_ptr<Tensor> tensor);
+
+    std::shared_ptr<Tensor> getTensor(int id){
         return tensor_registry->at(id);
     }
 
 private:
     std::shared_ptr<GradKey> gradkey;
-    std::shared_ptr<std::unordered_map<int, std::shared_ptr<TensorWrapper>>> tensor_registry;
+    std::shared_ptr<std::unordered_map<int, std::shared_ptr<Tensor>>> tensor_registry;
     bool inScope;
+    int nextTensorID = 0;
+
 };
 
 class EngineWrapper{
 public:
-    EngineWrapper(){}
+    EngineWrapper();
 
     void startScope(){
         _engine.startScope();
@@ -45,18 +49,21 @@ public:
         _engine.endScope();
     }
     void attach(int32_t id);
-    int backward(int32_t id);
+    void backward(int32_t id);
 
     #ifdef __EMSCRIPTEN__
-    int registerTensor(const int id, const emscripten::val &v, const emscripten::val &data);
-    int randn(const int id, const emscripten::val &v);
+    int registerTensor(const emscripten::val &v, const emscripten::val &data);
+    int randn(const emscripten::val &v);
     #else
     int registerTensor(std::shared_ptr<Tensor> t);
     #endif
     int32_t getTensorOffset(const int id);
     int32_t getGradOffset(const int id);
-    std::shared_ptr<TensorWrapper> getTensor(int id){
+    std::shared_ptr<Tensor> getTensor(int id){
         return _engine.getTensor(id);
+    }
+    std::shared_ptr<TensorWrapper> getTensorWrapper(int id){
+        return _tensor_wrapper_registry->at(id);
     }
 
     int mul(int a, int b);
@@ -64,11 +71,9 @@ public:
     int sub(int a, int b);
     int sin(int a);
     int cos(int a);
-
-    int nextTensorID = 2;
-
 private:
     Engine _engine;
+    std::shared_ptr<std::unordered_map<int, std::shared_ptr<TensorWrapper>>> _tensor_wrapper_registry;
 };
 
 
