@@ -542,7 +542,7 @@ void GradKey::cleanup() {
 
 GradKey::~GradKey() {
     cleanup();
-    mgb_log("Delete GradKey");
+    // mgb_log("Delete GradKey");
 }
 
 std::unordered_map<Typeinfo*, GradRuleFn>& grad_rule_registry() {

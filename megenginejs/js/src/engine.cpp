@@ -9,15 +9,13 @@ Engine& Engine::inst() {
 }
 
 Engine::Engine(){
-    mgb_log("Create Engine");
+    // mgb_log("Create Engine");
     inScope = true;
-    #ifndef __EMSCRIPTEN__
     tensor_registry = std::make_shared<std::unordered_map<int, std::shared_ptr<Tensor>>>();
-    #endif
 }
 
 Engine::~Engine(){
-
+    mgb_log("%lu tensors", tensor_registry->size());
     mgb_log("Delete Engine");
 }
 
@@ -47,28 +45,24 @@ int Engine::registerTensor(std::shared_ptr<Tensor> tensor){
 }
 
 EngineWrapper::EngineWrapper(){
-    #ifndef __EMSCRIPTEN__
     _tensor_wrapper_registry = std::make_shared<std::unordered_map<int, std::shared_ptr<TensorWrapper>>>();
-    #endif
+}
+
+void EngineWrapper::disposeTensor(int id){
+    auto tensor = getTensorWrapper(id);
+    _engine.disposeTensor(tensor->_tensor);
+    _engine.disposeTensor(tensor->_grad);
+    _tensor_wrapper_registry->erase(id);
 }
 
 void EngineWrapper::attach(int32_t id){
     auto tensor_wrapper = getTensorWrapper(id);
-    auto tensor = _engine.getTensor(id);
-    // std::cout << tensor << std::endl;
+    auto tensor = getTensor(id);
     _engine.attach(tensor.get(), [tensor_wrapper, this](std::shared_ptr<Tensor> grad){
-        // std::cout << tensor << std::endl;
         auto id = _engine.registerTensor(std::move(grad));
         tensor_wrapper->_grad = id;
-/*         std::cout <<tensor->_grad.get() << std::endl;
-        HostTensorND gradTensor = tensor->_grad->value();
-        auto t_out_grad = gradTensor.ptr<float>();
-        for(int i = 0; i < tensor->_grad->shape().total_nr_elems(); i++){
-            // std::cout << t_out_grad[i] << std::endl;
-            mgb_log("Grad<%d>: %f",i, t_out_grad[i]);
-        } */
     });
-    mgb_log("Attach Tensor %d", id);
+    // mgb_log("Attach Tensor %d", id);
 }
 
 HostTensorND makeGrad(const TensorShape& shape){
@@ -83,21 +77,18 @@ HostTensorND makeGrad(const TensorShape& shape){
 }
 
 void EngineWrapper::backward(int32_t id){
-    auto tensor = _engine.getTensor(id);
+    auto tensor = getTensor(id);
     auto dy = interpreter_for_js->put(makeGrad(tensor->shape()), true);
     Tensor* pdy = new Tensor(dy);
-    // auto dy = make_tensor_like(tensor->_tensor.get(), 1);
-    // auto dy_id = nextTensorID++;
-    // _engine.insertTensor(dy_id, std::make_shared<TensorWrapper>(dy));
     std::vector<Tensor*> ts{tensor.get()};
     std::vector<Tensor*> gs{pdy};
     _engine.backward(ts, gs);
-    mgb_log("Backward Finish");
+    // mgb_log("Backward Finish");
 }
 
 
 #ifdef __EMSCRIPTEN__
-int EngineWrapper::registerTensor(const emscripten::val &v, const emscripten::val &data){
+int EngineWrapper::registerTensorEM(const emscripten::val &v, const emscripten::val &data){
     SmallVector<size_t> rv;
     const auto l = v["length"].as<unsigned>();
     rv.resize(l);
@@ -115,7 +106,7 @@ int EngineWrapper::registerTensor(const emscripten::val &v, const emscripten::va
     auto cn = CompNode::load("cpu0");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape);
     auto ptr = ret->ptr<float>();
-    for(int i = 0; i < shape.total_nr_elems(); i++){
+    for(size_t i = 0; i < shape.total_nr_elems(); i++){
         ptr[i] = rdata[i];
     }
 
@@ -127,18 +118,18 @@ int EngineWrapper::registerTensor(const emscripten::val &v, const emscripten::va
     return id;
 }
 
-int EngineWrapper::randn(const emscripten::val &v){
+int EngineWrapper::randn(const emscripten::val &v, const float mean, const float std){
     SmallVector<size_t> rv;
     const auto l = v["length"].as<unsigned>();
     rv.resize(l);
     emscripten::val memoryView{emscripten::typed_memory_view(l, rv.data())};
     memoryView.call<void>("set", v);
     TensorShape shape = TensorShape{l};
-    auto op = std::shared_ptr<OpDef>(GaussianRNG::make(rand()));
+    auto op = GaussianRNG::make(rand(), mean, std);
     auto cn = CompNode::load("cpu0");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
     auto ptr = ret->ptr<int32_t>();
-    for (int i=0; i<l; i++) {
+    for (uint32_t i=0; i<l; i++) {
         ptr[i] = rv[i];
         // mgb_log("size: %d", rv[i]);
     }
@@ -148,21 +139,21 @@ int EngineWrapper::randn(const emscripten::val &v){
 
     // generate rand Tensor
     auto result = js::apply(op, tensor.get())[0];
-    auto id = _engine.registerTensor(result);
-    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
+    auto id = registerTensor(result);
     // mgb_log("register Tensor %d", id);
     return id;
 }
-#else 
+#endif
+
 int EngineWrapper::registerTensor(std::shared_ptr<Tensor> t){
     auto id = _engine.registerTensor(t);
     _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
     return id;
 }
-#endif
+
 
 int32_t EngineWrapper::getTensorOffset(const int id){
-    auto tensor = _engine.getTensor(id);
+    auto tensor = getTensor(id);
     auto ptr = tensor->value().ptr<float>();
     #ifdef __EMSCRIPTEN__
     return reinterpret_cast<int32_t>(ptr);
@@ -172,72 +163,147 @@ int32_t EngineWrapper::getTensorOffset(const int id){
 }
 
 int32_t EngineWrapper::getGradOffset(const int id){
-    auto tensor_wrapper = getTensorWrapper(id);
-    auto grad = _engine.getTensor(tensor_wrapper->_grad);
-    // std::cout << tensor->_grad.get() << " " << tensor->_tensor.get() << std::endl;
-    auto ptr = grad->value().ptr<float>();
-    #ifdef __EMSCRIPTEN__
-    return reinterpret_cast<int32_t>(ptr);
-    #else 
-    return reinterpret_cast<uintptr_t>(ptr);
-    #endif
+    auto gradID = getGradID(id);
+    return getTensorOffset(gradID);
 }
 
 void printTensor(std::shared_ptr<Tensor> t){
     auto t_out_value = t->value().ptr<float>();
-    for(int i = 0; i < t->shape().total_nr_elems(); i++){
+    for(size_t i = 0; i < t->shape().total_nr_elems(); i++){
         std::cout << t_out_value[i] << std::endl;
     }
 }
 
+void EngineWrapper::printTensor(int id){
+    auto tensor = getTensor(id);
+    auto ptr = tensor->value().ptr<float>();
+    mgb_log("Tensor %d", id);
+    for(size_t i = 0; i < tensor->shape().total_nr_elems(); i++){
+        mgb_log("Tensor<%zu>: %f",i, ptr[i]);
+    }
+}
+
+void EngineWrapper::printGrad(int id){
+    auto grad = getGrad(id);
+    auto ptr = grad->value().ptr<float>();
+    mgb_log("Grad %d", id);
+    for(size_t i = 0; i < grad->shape().total_nr_elems(); i++){
+        mgb_log("Grad<%zu>: %f",i, ptr[i]);
+    }
+}
+
 int EngineWrapper::mul(int a, int b){
-    auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::MUL));
-    auto tensorA = _engine.getTensor(a);
-    auto tensorB = _engine.getTensor(b);
+    auto op = Elemwise::make(Elemwise::Mode::MUL);
+    auto tensorA = getTensor(a);
+    auto tensorB = getTensor(b);
     auto outTensor = js::apply(op, tensorA.get(), tensorB.get())[0];
-    auto id = _engine.registerTensor(outTensor);
-    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
+    auto id = registerTensor(outTensor);
     return id;
 }
 
-int EngineWrapper::add(int a, int b){
-    auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::ADD));
-    auto tensorA = _engine.getTensor(a);
-    auto tensorB = _engine.getTensor(b);
+int EngineWrapper::matmul(int a, int b){
+    auto op = MatrixMul::make();
+    auto tensorA = getTensor(a);
+    auto tensorB = getTensor(b);
     auto outTensor = js::apply(op, tensorA.get(), tensorB.get())[0];
-    auto id = _engine.registerTensor(outTensor);
-    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});;
+    auto id = registerTensor(outTensor);
+    return id;
+}
+
+
+int EngineWrapper::add(int a, int b){
+    auto op = Elemwise::make(Elemwise::Mode::ADD);
+    auto tensorA = getTensor(a);
+    auto tensorB = getTensor(b);
+    auto outTensor = js::apply(op, tensorA.get(), tensorB.get())[0];
+    auto id = registerTensor(outTensor);
     return id;
 }
 
 int EngineWrapper::sub(int a, int b){
-    auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::SUB));
-    auto tensorA = _engine.getTensor(a);
-    auto tensorB = _engine.getTensor(b);
+    auto op = Elemwise::make(Elemwise::Mode::SUB);
+    auto tensorA = getTensor(a);
+    auto tensorB = getTensor(b);
     auto outTensor = js::apply(op, tensorA.get(), tensorB.get())[0];
-    auto id = _engine.registerTensor(outTensor);
-    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
+    auto id = registerTensor(outTensor);
+    return id;
+}
+
+int EngineWrapper::div(int a, int b){
+    auto op = Elemwise::make(Elemwise::Mode::TRUE_DIV);
+    auto tensorA = getTensor(a);
+    auto tensorB = getTensor(b);
+    auto outTensor = js::apply(op, tensorA.get(), tensorB.get())[0];
+    auto id = registerTensor(outTensor);
     return id;
 }
 
 int EngineWrapper::sin(int a){
-    auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::SIN));
-    auto tensorA = _engine.getTensor(a);
+    auto op = Elemwise::make(Elemwise::Mode::SIN);
+    auto tensorA = getTensor(a);
     auto outTensor = js::apply(op, tensorA.get())[0];
-    auto id = _engine.registerTensor(outTensor);
-    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
+    auto id = registerTensor(outTensor);
     return id; 
 }
 
 
 int EngineWrapper::cos(int a){
-    auto op = std::shared_ptr<OpDef>(Elemwise::make(Elemwise::Mode::COS));
-    auto tensorA = _engine.getTensor(a);
+    auto op = Elemwise::make(Elemwise::Mode::COS);
+    auto tensorA = getTensor(a);
     auto outTensor = js::apply(op, tensorA.get())[0];
-    auto id = _engine.registerTensor(outTensor);
-    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
+    auto id = registerTensor(outTensor);
     return id; 
 }
+
+std::shared_ptr<Tensor> make_shape(std::initializer_list<int32_t> init_shape) {
+    auto cn = CompNode::load("cpu0");
+    HostTensorND scalar{cn, {{init_shape.size()}, dtype::Int32()}};
+    auto ptr = scalar.ptr<int32_t>();
+    auto idx = 0;
+    for(auto value : init_shape){
+        ptr[idx] = value;
+        ++idx;
+    }
+    Interpreter::Handle handle = interpreter_for_js->put(scalar, false);
+    return std::make_shared<Tensor>(handle);
+}
+
+int EngineWrapper::mean(int a){
+    auto op = Reduce::make(Reduce::Mode::MEAN);
+    auto tensorA = getTensor(a);
+    auto outTensor = js::apply(op, tensorA.get(), make_shape({1}).get())[0];
+    auto id = registerTensor(outTensor);
+    return id;
+}
+
+int EngineWrapper::min(int a){
+    auto op = Reduce::make(Reduce::Mode::MIN);
+    auto tensorA = getTensor(a);
+    auto outTensor = js::apply(op, tensorA.get(), make_shape({1}).get())[0];
+    auto id = registerTensor(outTensor);
+    return id;
+}
+int EngineWrapper::max(int a){
+    auto op = Reduce::make(Reduce::Mode::MAX);
+    auto tensorA = getTensor(a);
+    auto outTensor = js::apply(op, tensorA.get(), make_shape({1}).get())[0];
+    auto id = registerTensor(outTensor);
+    return id;
+}
+
+std::shared_ptr<Tensor> flatten(std::shared_ptr<Tensor> t){
+    auto reshape = Reshape::make(0);
+    return js::apply(reshape, t.get(), make_shape({-1}))[0];
+}
+
+int EngineWrapper::sum(int a){
+    auto tensorA = getTensor(a);
+    auto op = Reduce::make(Reduce::Mode::SUM, 0, Reduce::DataType::DEFAULT);
+    auto outTensor = js::apply(op, flatten(tensorA).get())[0];
+    auto id = registerTensor(outTensor);
+    return id;
+}
+
 
 
 #ifdef __EMSCRIPTEN__
@@ -248,15 +314,23 @@ EMSCRIPTEN_BINDINGS(Engine) {
     .function("endScope", &EngineWrapper::endScope)
     .function("attach", &EngineWrapper::attach)
     .function("backward", &EngineWrapper::backward)
-    .function("registerTensor", &EngineWrapper::registerTensor, emscripten::allow_raw_pointers())
+    .function("registerTensor", &EngineWrapper::registerTensorEM)
+    .function("disposeTensor", &EngineWrapper::disposeTensor)
     .function("getTensorOffset", &EngineWrapper::getTensorOffset)
     .function("getGradOffset", &EngineWrapper::getGradOffset)
+    .function("getGrad", &EngineWrapper::getGradID)
     .function("randn", &EngineWrapper::randn)
     .function("mul", &EngineWrapper::mul)
+    .function("div", &EngineWrapper::div)
+    .function("matmul", &EngineWrapper::matmul)
     .function("add", &EngineWrapper::add)
     .function("sub", &EngineWrapper::sub)
     .function("sin", &EngineWrapper::sin)
     .function("cos", &EngineWrapper::cos)
+    .function("mean", &EngineWrapper::mean)
+    .function("min", &EngineWrapper::min)
+    .function("max", &EngineWrapper::max)
+    .function("sum", &EngineWrapper::sum)
     ;
 }
 #endif

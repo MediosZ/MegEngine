@@ -202,8 +202,6 @@ inline auto apply(std::shared_ptr<OpDef> op, Tensor*const* args, size_t nargs) {
     }
     return apply(ctx);
 }
-std::shared_ptr<Tensor> makeTensor();
-std::shared_ptr<Tensor> make_tensor_like(Tensor* other, float v = 1);
 
 void jsapply();
 // void jsbackward();
