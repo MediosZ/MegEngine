@@ -34,6 +34,10 @@ public:
         tensor_registry->erase(id);
     }
 
+    void replaceTensor(int id, std::shared_ptr<Tensor> t){
+        tensor_registry->at(id) = t;
+    }
+
 private:
     std::shared_ptr<GradKey> gradkey;
     std::shared_ptr<std::unordered_map<int, std::shared_ptr<Tensor>>> tensor_registry;
@@ -60,6 +64,8 @@ public:
     int randn(const emscripten::val &v, const float mean, const float std);
     #endif
     int registerTensor(std::shared_ptr<Tensor> t);
+    int replaceTensor(int id, std::shared_ptr<Tensor> t);
+
 
     int32_t getTensorOffset(const int id);
     int32_t getGradOffset(const int id);
@@ -87,6 +93,8 @@ public:
     int matmul(int a, int b);
     int add(int a, int b);
     int sub(int a, int b);
+    int add_(int a, int b);
+    int sub_(int a, int b);
     int sin(int a);
     int cos(int a);
     int mean(int a);

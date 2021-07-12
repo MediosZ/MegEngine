@@ -114,6 +114,14 @@ class Engine{
     return out;
   }
 
+  sub_(a: Tensor, b: Tensor){
+    this.engine.sub_(a.data, b.data);
+  }
+
+  add_(a: Tensor, b: Tensor){
+    this.engine.add_(a.data, b.data);
+  }
+
   mul(a: Tensor, b: Tensor): Tensor{
     let outID = this.engine.mul(a.data, b.data);
     let offset = this.getMemOffset(outID);
@@ -225,7 +233,8 @@ export class GradManager{
   optimize(lr: Tensor, bs: Tensor){
     for(let tensor of this.attached_tensors){
       ENGINE.updateGrad(tensor);
-      tensor.data = ENGINE.sub(tensor, ENGINE.div(ENGINE.mul(tensor.grad, lr), bs)).data;
+      tensor.sub_(tensor.grad.mul(lr).div(bs));
+      // ENGINE.sub_(tensor, ENGINE.div(ENGINE.mul(tensor.grad, lr), bs));
       // ENGINE.printTensor(tensor, `t<${tensor.data}>: `);
     }
   }

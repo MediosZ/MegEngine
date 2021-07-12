@@ -150,6 +150,10 @@ int EngineWrapper::registerTensor(std::shared_ptr<Tensor> t){
     _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
     return id;
 }
+int EngineWrapper::replaceTensor(int id, std::shared_ptr<Tensor> t){
+    _engine.replaceTensor(id, t);
+    return id;
+}
 
 
 int32_t EngineWrapper::getTensorOffset(const int id){
@@ -210,6 +214,23 @@ int EngineWrapper::matmul(int a, int b){
     return id;
 }
 
+int EngineWrapper::add_(int a, int b){
+    auto op = Elemwise::make(Elemwise::Mode::ADD);
+    auto tensorA = getTensor(a);
+    auto tensorB = getTensor(b);
+    auto outTensor = js::apply(op, tensorA.get(), tensorB.get())[0];
+    auto id = replaceTensor(a, outTensor);
+    return id;
+}
+
+int EngineWrapper::sub_(int a, int b){
+    auto op = Elemwise::make(Elemwise::Mode::SUB);
+    auto tensorA = getTensor(a);
+    auto tensorB = getTensor(b);
+    auto outTensor = js::apply(op, tensorA.get(), tensorB.get())[0];
+    auto id = replaceTensor(a, outTensor);
+    return id;
+}
 
 int EngineWrapper::add(int a, int b){
     auto op = Elemwise::make(Elemwise::Mode::ADD);
@@ -325,6 +346,8 @@ EMSCRIPTEN_BINDINGS(Engine) {
     .function("matmul", &EngineWrapper::matmul)
     .function("add", &EngineWrapper::add)
     .function("sub", &EngineWrapper::sub)
+    .function("add_", &EngineWrapper::add_)
+    .function("sub_", &EngineWrapper::sub_)
     .function("sin", &EngineWrapper::sin)
     .function("cos", &EngineWrapper::cos)
     .function("mean", &EngineWrapper::mean)

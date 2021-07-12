@@ -13,18 +13,10 @@ async function main() {
     const true_b = ENGINE.tensor([4.2]);
     let features = ENGINE.rand([num_examples, num_inputs])
 
-    let labels =
-    ENGINE.add(
-      ENGINE.add(
-        ENGINE.matmul(
-          features,
-          true_w ) ,
-        true_b),
-      ENGINE.rand(
-        [num_examples],
-        0,
-        0.01)
-    );
+    let labels = features
+        .matmul(true_w)
+        .add(true_b)
+        .add(ENGINE.rand([num_examples],0,0.01));
     // console.log(ENGINE.readSync(labels.id));
 
     let w = ENGINE.rand([num_inputs, 1], 0, 0.005);
@@ -33,27 +25,14 @@ async function main() {
     let gm = new GradManager();
     let bs = ENGINE.tensor([num_examples]);
     let lr = ENGINE.tensor([0.001]);
-    ENGINE.printTensor(bs);
-    ENGINE.printTensor(lr);
+
     gm.attach([w, b]);
 
     for(let i = 0; i < epoch; i++){
       gm.backward(() => {
-        let output =
-        ENGINE.add(
-          ENGINE.matmul(
-            features,
-            w),
-          b
-        );
-
-        let loss =
-        ENGINE.sum(
-          ENGINE.square(
-            ENGINE.sub(
-              output,
-              labels))
-        );
+        let output = features.matmul(w).add(b);
+        let loss = output.sub(labels).square().sum();
+        
         ENGINE.printTensor(loss, "Loss: ");
         return loss;
       })
