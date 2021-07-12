@@ -15,3 +15,7 @@ __pycache__/
 compile_commands.json
 
 build_dir/
+megenginejs/node_modules/
+megenginejs/*.lock
+megenginejs/wasm-out
+megenginejs/dist
