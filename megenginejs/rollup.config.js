@@ -7,7 +7,7 @@ import {terser} from 'rollup-plugin-terser';
 import nodePolyfills from 'rollup-plugin-node-polyfills';
 
 export default {
-  input: 'js/megengine/main.ts',
+  input: 'js/megengine/index.ts',
   output: {
     dir: 'dist',
     format: 'umd',

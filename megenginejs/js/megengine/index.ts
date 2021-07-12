@@ -1,4 +1,5 @@
 export {DType, RecursiveArray} from './dtypes';
-export {ENGINE, GradManager} from './engine';
+export {ENGINE, setWasmPath} from './engine';
 export { Tensor } from './tensor';
+export {GradManager} from './grad_manager';
 

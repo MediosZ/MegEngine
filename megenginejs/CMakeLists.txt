@@ -27,13 +27,12 @@ set(FLAGS
     --bind
     -s EXPORT_NAME='MegJSModule'
     -s EXPORTED_RUNTIME_METHODS="['cwrap', 'ccall']"
-    --preload-file ${CMAKE_SOURCE_DIR}/data@/
-    -gseparate-dwarf
     -s ALLOW_MEMORY_GROWTH=1
     -s INITIAL_MEMORY=512mb
     -s TOTAL_STACK=128mb
     -s DISABLE_EXCEPTION_CATCHING=0
 )
+# --preload-file ${CMAKE_SOURCE_DIR}/data@/
 string(REPLACE ";" " " FLAG_STR "${FLAGS}")
 if(EMSCRIPTEN_ROOT_PATH)
 set_target_properties(meg PROPERTIES

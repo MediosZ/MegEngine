@@ -5,6 +5,12 @@
   "scripts": {
     "build": "yarn rollup -c rollup.config.js"
   },
+  "browser": {
+    "fs": false,
+    "path": false,
+    "worker_threads": false,
+    "perf_hooks": false
+  },
   "staticFiles": {
     "staticPath": "./wasm-out",
     "excludeGlob": [
