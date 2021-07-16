@@ -2,6 +2,7 @@ import {DType, RecursiveArray, TypedArray} from './dtypes';
 import {inferShape, inferSizeFromShape, flatten} from './utils';
 import {init, MegEngine, setWasmPath} from './backend';
 import {Tensor} from './tensor';
+import { isThisTypeNode } from 'typescript';
 
 export {setWasmPath} from './backend';
 
@@ -194,6 +195,15 @@ class Engine{
     return out;
   }
 
+
+  log(a: Tensor): Tensor{
+    let outID = this.engine.log(a.data);
+    let offset = this.getMemOffset(outID);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
+    this.tensorMap.set(outID, out);
+    return out;
+  }
+
   cos(a: Tensor): Tensor{
     let outID = this.engine.cos(a.data);
     let offset = this.getMemOffset(outID);
@@ -201,34 +211,19 @@ class Engine{
     this.tensorMap.set(outID, out);
     return out;
   }
-  mean(a: Tensor): Tensor{
-    let outID = this.engine.mean(a.data);
-    let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
-    this.tensorMap.set(outID, out);
-    return out;
+  mean(a: Tensor, axis?: number, keepdims=false): Tensor{
+    return this.reduce(5)(a, axis, keepdims);
   }
-  max(a: Tensor): Tensor{
-    let outID = this.engine.max(a.data);
-    let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
-    this.tensorMap.set(outID, out);
-    return out;
+  max(a: Tensor, axis?: number, keepdims=false): Tensor{
+    return this.reduce(4)(a, axis, keepdims);
   }
-  min(a: Tensor): Tensor{
-    let outID = this.engine.min(a.data);
-    let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
-    this.tensorMap.set(outID, out);
-    return out;
+  min(a: Tensor, axis?: number, keepdims=false): Tensor{
+    return this.reduce(3)(a, axis, keepdims);
   }
-  sum(a: Tensor): Tensor{
-    let outID = this.engine.sum(a.data);
-    let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
-    this.tensorMap.set(outID, out);
-    return out;
+  sum(a: Tensor, axis?: number, keepdims=false): Tensor{
+    return this.reduce(0)(a, axis, keepdims);
   }
+
   square(a: Tensor): Tensor{
     return this.mul(a, a);
   }
@@ -241,8 +236,16 @@ class Engine{
     return out;
   }
 
+  exp(a: Tensor): Tensor{
+    let outID = this.engine.exp(a.data);
+    let offset = this.getMemOffset(outID);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
+    this.tensorMap.set(outID, out);
+    return out;
+  }
+
   reshape(a: Tensor, shape: number[]){
-      let unspec_axis: number = null;
+      let unspec_axis: number = undefined;
       shape.forEach((value, index) => {
         if(value < 0){
             if(value !== -1){
@@ -255,15 +258,113 @@ class Engine{
         }
       });
 
-      let outID = this.engine.reshape(a.data, shape, unspec_axis || -1);
+      let outID = this.engine.reshape(a.data, shape, (unspec_axis === undefined) ? -1 : unspec_axis);
       let offset = this.getMemOffset(outID);
       let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
       this.tensorMap.set(outID, out);
       return out;
   }
 
+  removeAxis(a: Tensor, axis: number[]){
+    let ax = axis.map((value, index) => {
+        return value - index;
+    });
+    let outID = this.engine.removeAxis(a.data, ax);
+    let offset = this.getMemOffset(outID);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
+    this.tensorMap.set(outID, out);
+    return out; 
+  }
+
+  addAxis(a: Tensor, axis: number[]){
+    let outID = this.engine.addAxis(a.data, axis);
+    let offset = this.getMemOffset(outID);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
+    this.tensorMap.set(outID, out);
+    return out; 
+  }
+
+  squeeze(t: Tensor, axis?: number){
+    if(axis === undefined || axis === -1){
+      return this.removeAxis(t, [t.shape.length - 1]);
+    }
+    else{
+      return this.removeAxis(t, [axis]);
+    }
+  }
+
+  unsqueeze(t: Tensor, axis?: number){
+    if(axis === undefined || axis === -1){
+      return this.addAxis(t, [t.shape.length]);
+    }
+    else{
+      return this.addAxis(t, [axis]);
+    }
+  }
+
+
+  reduce(mode: number){
+    return (a: Tensor, axis: null | number, keepdims: boolean = false) => {
+        if(axis === undefined){
+            let fla = this.reshape(a, [-1]);
+            if(keepdims){
+                throw Error("can not set axis=null and keepdims=true");
+            }
+            let outID = this.engine.reduce(fla.data, mode, 0);
+            let offset = this.getMemOffset(outID);
+            let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
+            this.tensorMap.set(outID, out);
+            return out;
+        }
+        else{
+            let outID = this.engine.reduce(a.data, mode, axis);
+            let offset = this.getMemOffset(outID);
+            let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
+            this.tensorMap.set(outID, out);
+            if(!keepdims){
+                let axis: number[] = [];
+                out.shape.forEach((element, index) => {
+                    if(element == 1){
+                        axis.push(index);
+                    }
+                });
+                return this.removeAxis(out, axis);
+            }
+            return out;
+        }
+    }
+  }
+
   flattern(t: Tensor){
-      return this.reshape(t, [t.shape[0], -1]);
+      return this.reshape(t, [-1]);
+  }
+
+  index_one_hot(t: Tensor, index: number[], axis: number = 1, keepdims: boolean = false){
+    let outID = this.engine.index_one_hot(t.data, index, axis);
+    let offset = this.getMemOffset(outID);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
+    this.tensorMap.set(outID, out);
+    if(keepdims){
+        return out;
+    }
+    else{
+        return this.squeeze(out, axis);
+    }
+
+  }
+
+  logsumexp(t: Tensor, axis: number, keepdims: boolean = false){
+      let maxValue = this.max(t, axis, true);
+    if(keepdims){
+        return maxValue.add(this.log(
+            this.sum(this.exp(t.sub(maxValue)), axis, keepdims)
+        ));
+    }
+    else{
+        return this.squeeze(maxValue).add(this.log(
+            this.sum(this.exp(t.sub(maxValue)), axis, keepdims)
+        ));
+    }
   }
 
   cleanup(){

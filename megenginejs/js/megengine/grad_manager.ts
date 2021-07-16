@@ -8,11 +8,11 @@ export class GradManager{
       this.attached_tensors = []
     }
   
-    attach(tensors: Tensor[]){
+    attach(tensors: Tensor[]): GradManager {
       for(let tensor of tensors){
         this.attached_tensors.push(tensor);
       }
-  
+      return this;
     }
   
     backward(compute: ()=>Tensor){

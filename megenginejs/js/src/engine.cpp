@@ -212,7 +212,58 @@ int EngineWrapper::reshape(int a, const emscripten::val &v, int unspec){
     auto outTensor = js::apply(op, tensor.get(), shapeTensor.get())[0];
     auto id = registerTensor(outTensor);
     return id; 
+}
 
+int EngineWrapper::removeAxis(int a, const emscripten::val &v){
+    std::vector<int32_t> rv;
+    const auto l = v["length"].as<unsigned>();
+    rv.resize(l);
+    emscripten::val shapeMemoryView{emscripten::typed_memory_view(l, rv.data())};
+    shapeMemoryView.call<void>("set", v);
+
+    auto tensorA = getTensor(a);
+    auto op = RemoveAxis::make(rv);
+    auto outTensor = js::apply(op, tensorA.get())[0];
+    auto id = registerTensor(outTensor);
+    return id;
+}
+
+int EngineWrapper::addAxis(int a, const emscripten::val &v){
+    std::vector<int32_t> rv;
+    const auto l = v["length"].as<unsigned>();
+    rv.resize(l);
+    emscripten::val shapeMemoryView{emscripten::typed_memory_view(l, rv.data())};
+    shapeMemoryView.call<void>("set", v);
+
+    auto tensorA = getTensor(a);
+    auto op = AddAxis::make(rv);
+    auto outTensor = js::apply(op, tensorA.get())[0];
+    auto id = registerTensor(outTensor);
+    return id;
+}
+
+int EngineWrapper::index_one_hot(int a, const emscripten::val &v, int axis){
+    SmallVector<size_t> rv;
+    const auto l = v["length"].as<unsigned>();
+    rv.resize(l);
+    emscripten::val memoryView{emscripten::typed_memory_view(l, rv.data())};
+    memoryView.call<void>("set", v);
+    TensorShape shape = TensorShape{l};
+    auto cn = CompNode::load("cpu0");
+    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
+    auto ptr = ret->ptr<int32_t>();
+    for (uint32_t i=0; i<l; i++) {
+        ptr[i] = rv[i];
+    }
+    auto handle = interpreter_for_js->put(*ret, true);
+    // shape tensor
+    auto indexTensor = std::make_shared<Tensor>(handle);
+
+    auto tensorA = getTensor(a);
+    auto op = IndexingOneHot::make(axis);
+    auto outTensor = js::apply(op, tensorA.get(), indexTensor.get())[0];
+    auto id = registerTensor(outTensor);
+    return id;
 }
 
 #endif
@@ -356,6 +407,14 @@ int EngineWrapper::cos(int a){
     return id; 
 }
 
+int EngineWrapper::log(int a){
+    auto op = Elemwise::make(Elemwise::Mode::LOG);
+    auto tensorA = getTensor(a);
+    auto outTensor = js::apply(op, tensorA.get())[0];
+    auto id = registerTensor(outTensor);
+    return id; 
+}
+
 std::shared_ptr<Tensor> make_shape(std::initializer_list<int32_t> init_shape) {
     auto cn = CompNode::load("cpu0");
     HostTensorND scalar{cn, {{init_shape.size()}, dtype::Int32()}};
@@ -369,42 +428,24 @@ std::shared_ptr<Tensor> make_shape(std::initializer_list<int32_t> init_shape) {
     return std::make_shared<Tensor>(handle);
 }
 
-int EngineWrapper::mean(int a){
-    auto op = Reduce::make(Reduce::Mode::MEAN);
+
+
+/*
+SUM = 0,
+//! sum of x * x for each element x
+SUM_SQR = 1,
+PRODUCT = 2,
+MIN = 3,
+MAX = 4,
+MEAN = 5
+*/
+
+int EngineWrapper::reduce(int a, int mode, int axis){
     auto tensorA = getTensor(a);
-    auto outTensor = js::apply(op, tensorA.get(), make_shape({1}).get())[0];
+    auto op = Reduce::make(static_cast<Reduce::Mode>(mode), axis, Reduce::DataType::DEFAULT);
+    auto outTensor = js::apply(op, tensorA)[0];
     auto id = registerTensor(outTensor);
     return id;
-}
-
-int EngineWrapper::min(int a){
-    auto op = Reduce::make(Reduce::Mode::MIN);
-    auto tensorA = getTensor(a);
-    auto outTensor = js::apply(op, tensorA.get(), make_shape({1}).get())[0];
-    auto id = registerTensor(outTensor);
-    return id;
-}
-int EngineWrapper::max(int a){
-    auto op = Reduce::make(Reduce::Mode::MAX);
-    auto tensorA = getTensor(a);
-    auto outTensor = js::apply(op, tensorA.get(), make_shape({1}).get())[0];
-    auto id = registerTensor(outTensor);
-    return id;
-}
-
-std::shared_ptr<Tensor> flatten(std::shared_ptr<Tensor> t){
-    auto reshape = Reshape::make(0);
-    return js::apply(reshape, t.get(), make_shape({-1}))[0];
-}
-
-
-int EngineWrapper::sum(int a){
-    auto tensorA = getTensor(a);
-    auto op = Reduce::make(Reduce::Mode::SUM, 0, Reduce::DataType::DEFAULT);
-    auto outTensor = js::apply(op, flatten(tensorA).get())[0];
-    auto id = registerTensor(outTensor);
-    return id;
-
 }
 
 int EngineWrapper::conv2d(int a, int w, const int stride, const int padding){
@@ -436,9 +477,12 @@ int EngineWrapper::relu(int a){
 }
 
 
-std::vector<int> returnVec(){
-    std::vector<int> vec{1,2,3};
-    return vec;
+int EngineWrapper::exp(int a){
+    auto op = Elemwise::make(Elemwise::Mode::EXP);
+    auto tensorA = getTensor(a);
+    auto outTensor = js::apply(op, tensorA.get())[0];
+    auto id = registerTensor(outTensor);
+    return id; 
 }
 
 
@@ -468,21 +512,19 @@ EMSCRIPTEN_BINDINGS(Engine) {
     .function("sub_", &EngineWrapper::sub_)
     .function("sin", &EngineWrapper::sin)
     .function("cos", &EngineWrapper::cos)
-    .function("mean", &EngineWrapper::mean)
-    .function("min", &EngineWrapper::min)
-    .function("max", &EngineWrapper::max)
-    .function("sum", &EngineWrapper::sum)
     .function("conv2d", &EngineWrapper::conv2d)
     .function("pool", &EngineWrapper::pool)
     .function("relu", &EngineWrapper::relu)
     .function("reshape", &EngineWrapper::reshape)
-    
+    .function("log", &EngineWrapper::log)
+    .function("reduce", &EngineWrapper::reduce)
+    .function("removeAxis", &EngineWrapper::removeAxis)
+    .function("addAxis", &EngineWrapper::addAxis)
+    .function("index_one_hot", &EngineWrapper::index_one_hot)
+    .function("exp", &EngineWrapper::exp)
     .function("getTensorShape", &EngineWrapper::getTensorShape)
     ;
 
-    emscripten::function("returnVec", &returnVec);
-
-    emscripten::register_vector<int>("vector<int>");
 }
 #endif
 

@@ -16,5 +16,6 @@ export {
 } from "./optimizers";
 
 export {
-    MSE
+    MSE,
+    CrossEntropy
 } from "./loss";

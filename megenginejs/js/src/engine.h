@@ -65,6 +65,9 @@ public:
     int ones(const emscripten::val &v);
     int zeros(const emscripten::val &v);
     int reshape(int a, const emscripten::val &v, int unspec);
+    int removeAxis(int a, const emscripten::val &v);
+    int addAxis(int a, const emscripten::val &v);
+    int index_one_hot(int a, const emscripten::val &v, int axis);
     #endif
     int registerTensor(std::shared_ptr<Tensor> t);
     int replaceTensor(int id, std::shared_ptr<Tensor> t);
@@ -103,13 +106,13 @@ public:
     int sub_(int a, int b);
     int sin(int a);
     int cos(int a);
-    int mean(int a);
-    int max(int a);
-    int min(int a);
-    int sum(int a);
     int conv2d(int a, int weight, const int stride, const int padding);
     int pool(int a, const int kernel, const int stride, const int padding, const int mode);
     int relu(int a);
+    int log(int a);
+    int reduce(int a, int mode, int axis);
+    int exp(int a);
+    
 private:
     Engine _engine;
     std::shared_ptr<std::unordered_map<int, std::shared_ptr<TensorWrapper>>> _tensor_wrapper_registry;
