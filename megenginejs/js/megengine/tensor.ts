@@ -1,40 +1,46 @@
 import { DType, TypedArray } from "./dtypes";
 import {ENGINE} from './engine';
 
-export class Tensor{
+export class Parameter{}
+
+export class Tensor extends Parameter{
   data: number;
   grad?: Tensor;
   dtype: DType;
   shape: number[];
   offset: number;
+  requires_grad: boolean
 
   constructor(data:number, shape: number[], offset: number,
       dtype: DType = DType.float32){
+      super();
       this.data = data
       this.dtype = dtype
       this.shape = shape
       this.offset = offset
+      this.requires_grad = true
   }
 
-  add(b: Tensor): Tensor{
-    return ENGINE.add(this, b);
+  add(b: Tensor | number): Tensor{
+    let that = this;
+    return ENGINE.add(that, b);
   }
   add_(b: Tensor){
     ENGINE.add_(this, b);
   }
-  sub(b: Tensor): Tensor{
+  sub(b: Tensor | number): Tensor{
     return ENGINE.sub(this, b);
   }
   sub_(b: Tensor){
     ENGINE.sub_(this, b);
   }
-  mul(b: Tensor): Tensor{
+  mul(b: Tensor | number): Tensor{
     return ENGINE.mul(this, b);
   }
   matmul(b: Tensor): Tensor{
     return ENGINE.matmul(this, b);
   }
-  div(b: Tensor): Tensor{
+  div(b: Tensor | number): Tensor{
     return ENGINE.div(this, b);
   }
 

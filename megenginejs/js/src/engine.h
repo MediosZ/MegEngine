@@ -62,9 +62,14 @@ public:
     #ifdef __EMSCRIPTEN__
     int registerTensorEM(const emscripten::val &v, const emscripten::val &data);
     int randn(const emscripten::val &v, const float mean, const float std);
+    int ones(const emscripten::val &v);
+    int zeros(const emscripten::val &v);
+    int reshape(int a, const emscripten::val &v, int unspec);
     #endif
     int registerTensor(std::shared_ptr<Tensor> t);
     int replaceTensor(int id, std::shared_ptr<Tensor> t);
+
+    
 
 
     int32_t getTensorOffset(const int id);
@@ -79,6 +84,7 @@ public:
     int getGradID(int id){
         return _tensor_wrapper_registry->at(id)->_grad;
     }
+    std::string getTensorShape(const int id);
     std::shared_ptr<TensorWrapper> getTensorWrapper(int id){
         return _tensor_wrapper_registry->at(id);
     }
@@ -90,7 +96,7 @@ public:
 
     int mul(int a, int b);
     int div(int a, int b);
-    int matmul(int a, int b);
+    int matmul(int a, int b, bool transposeA, bool transposeB);
     int add(int a, int b);
     int sub(int a, int b);
     int add_(int a, int b);
@@ -101,6 +107,9 @@ public:
     int max(int a);
     int min(int a);
     int sum(int a);
+    int conv2d(int a, int weight, const int stride, const int padding);
+    int pool(int a, const int kernel, const int stride, const int padding, const int mode);
+    int relu(int a);
 private:
     Engine _engine;
     std::shared_ptr<std::unordered_map<int, std::shared_ptr<TensorWrapper>>> _tensor_wrapper_registry;

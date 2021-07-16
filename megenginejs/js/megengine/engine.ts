@@ -10,6 +10,7 @@ class Engine{
   wasm: MegEngine
   curId: number
   engine: object
+  opRegistry: Map<string, Function>
 
   constructor(){
       this.curId = 0;
@@ -57,9 +58,36 @@ class Engine{
     return out;
   }
 
+  zeros(shape: number[]): Tensor{
+    let inferedShape = shape;
+    const shapeBytes = new Int32Array(inferedShape);
+    let outid = this.engine.zeros(shapeBytes);
+    let offset = this.getMemOffset(outid);
+    let out = new Tensor(outid, shape, offset, DType.float32);
+    this.tensorMap.set(outid, out);
+    return out;
+  }
+
+  ones(shape: number[]): Tensor{
+    let inferedShape = shape;
+    const shapeBytes = new Int32Array(inferedShape);
+    let outid = this.engine.ones(shapeBytes);
+    let offset = this.getMemOffset(outid);
+    let out = new Tensor(outid, shape, offset, DType.float32);
+    this.tensorMap.set(outid, out);
+    return out;
+  }
+
   getMemOffset(id: number): number{
     return this.engine.getTensorOffset(id);
   }
+
+  getTensorShape(id: number): number[]{
+    let shapeString = this.engine.getTensorShape(id);
+    let shape = shapeString.substring(1, shapeString.length-1).split(",").map((x: string) => parseInt(x));
+    // console.log(shape);
+    return shape;
+}
 
   async read(t: Tensor): Promise<TypedArray>{
     return this.readSync(t);
@@ -97,18 +125,27 @@ class Engine{
     this.engine.disposeTensor(t.data);
   }
 
-  add(a: Tensor, b: Tensor): Tensor{
-    let outID = this.engine.add(a.data, b.data);
+  applyOp(opName: string, ...tensors: Tensor[]){
+      let op = this.opRegistry.get(opName);
+    
+  }
+
+  add(a: Tensor | number, b: Tensor | number): Tensor{
+    let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
+    let tensorB: Tensor = (b instanceof Tensor) ? b : this.tensor([b]);
+    let outID = this.engine.add(tensorA.data, tensorB.data);
     let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, a.shape, offset, DType.float32);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
     this.tensorMap.set(outID, out);
     return out;
   }
 
-  sub(a: Tensor, b: Tensor): Tensor{
-    let outID = this.engine.sub(a.data, b.data);
+  sub(a: Tensor | number, b: Tensor | number): Tensor{
+    let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
+    let tensorB: Tensor = (b instanceof Tensor) ? b : this.tensor([b]);
+    let outID = this.engine.sub(tensorA.data, tensorB.data);
     let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, a.shape, offset, DType.float32);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
     this.tensorMap.set(outID, out);
     return out;
   }
@@ -121,26 +158,30 @@ class Engine{
     this.engine.add_(a.data, b.data);
   }
 
-  mul(a: Tensor, b: Tensor): Tensor{
-    let outID = this.engine.mul(a.data, b.data);
+  mul(a: Tensor | number, b: Tensor | number): Tensor{
+    let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
+    let tensorB: Tensor = (b instanceof Tensor) ? b : this.tensor([b]);
+    let outID = this.engine.mul(tensorA.data, tensorB.data);
     let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, a.shape, offset, DType.float32);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
     this.tensorMap.set(outID, out);
     return out;
   }
-  div(a: Tensor, b: Tensor): Tensor{
-    let outID = this.engine.div(a.data, b.data);
+  div(a: Tensor | number, b: Tensor | number): Tensor{
+    let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
+    let tensorB: Tensor = (b instanceof Tensor) ? b : this.tensor([b]);
+    let outID = this.engine.div(tensorA.data, tensorB.data);
     let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, a.shape, offset, DType.float32);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
     this.tensorMap.set(outID, out);
     return out;
   }
 
 
-  matmul(a: Tensor, b: Tensor): Tensor{
-    let outID = this.engine.matmul(a.data, b.data);
+  matmul(a: Tensor, b: Tensor, transposeA: boolean = false, transposeB: boolean = false): Tensor{
+    let outID = this.engine.matmul(a.data, b.data, transposeA, transposeB);
     let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, [a.shape[0], b.shape[1]], offset, DType.float32);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
     this.tensorMap.set(outID, out);
     return out;
   }
@@ -148,7 +189,7 @@ class Engine{
   sin(a: Tensor): Tensor{
     let outID = this.engine.sin(a.data);
     let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, a.shape, offset, DType.float32);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
     this.tensorMap.set(outID, out);
     return out;
   }
@@ -156,35 +197,35 @@ class Engine{
   cos(a: Tensor): Tensor{
     let outID = this.engine.cos(a.data);
     let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, a.shape, offset, DType.float32);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
     this.tensorMap.set(outID, out);
     return out;
   }
   mean(a: Tensor): Tensor{
     let outID = this.engine.mean(a.data);
     let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, [1], offset, DType.float32);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
     this.tensorMap.set(outID, out);
     return out;
   }
   max(a: Tensor): Tensor{
     let outID = this.engine.max(a.data);
     let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, [1], offset, DType.float32);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
     this.tensorMap.set(outID, out);
     return out;
   }
   min(a: Tensor): Tensor{
     let outID = this.engine.min(a.data);
     let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, [1], offset, DType.float32);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
     this.tensorMap.set(outID, out);
     return out;
   }
   sum(a: Tensor): Tensor{
     let outID = this.engine.sum(a.data);
     let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, [1], offset, DType.float32);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
     this.tensorMap.set(outID, out);
     return out;
   }
@@ -192,6 +233,38 @@ class Engine{
     return this.mul(a, a);
   }
 
+  relu(a: Tensor): Tensor{
+    let outID = this.engine.relu(a.data);
+    let offset = this.getMemOffset(outID);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
+    this.tensorMap.set(outID, out);
+    return out;
+  }
+
+  reshape(a: Tensor, shape: number[]){
+      let unspec_axis: number = null;
+      shape.forEach((value, index) => {
+        if(value < 0){
+            if(value !== -1){
+                throw Error(`expect shape[${index}] >= -1, got ${value}`);
+            }
+            if(unspec_axis){
+                throw Error(`multiple -1 in shape: ${unspec_axis} and ${idx}`);
+            }
+            unspec_axis = index;
+        }
+      });
+
+      let outID = this.engine.reshape(a.data, shape, unspec_axis || -1);
+      let offset = this.getMemOffset(outID);
+      let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
+      this.tensorMap.set(outID, out);
+      return out;
+  }
+
+  flattern(t: Tensor){
+      return this.reshape(t, [t.shape[0], -1]);
+  }
 
   cleanup(){
       this.engine.delete();

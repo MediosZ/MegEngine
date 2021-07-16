@@ -143,6 +143,78 @@ int EngineWrapper::randn(const emscripten::val &v, const float mean, const float
     // mgb_log("register Tensor %d", id);
     return id;
 }
+
+int EngineWrapper::zeros(const emscripten::val &v){
+    SmallVector<size_t> rv;
+    const auto l = v["length"].as<unsigned>();
+    rv.resize(l);
+    emscripten::val shapeMemoryView{emscripten::typed_memory_view(l, rv.data())};
+    shapeMemoryView.call<void>("set", v);
+    TensorShape shape = TensorShape(rv);
+    
+    auto cn = CompNode::load("cpu0");
+    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape);
+    auto ptr = ret->ptr<float>();
+    for(size_t i = 0; i < shape.total_nr_elems(); i++){
+        ptr[i] = 0.0;
+    }
+
+    auto handle = interpreter_for_js->put(*ret, true);
+    auto tensor = std::make_shared<Tensor>(handle);
+    auto id = _engine.registerTensor(tensor);
+    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
+    // mgb_log("register Tensor %d", id);
+    return id;
+}
+
+int EngineWrapper::ones(const emscripten::val &v){
+    SmallVector<size_t> rv;
+    const auto l = v["length"].as<unsigned>();
+    rv.resize(l);
+    emscripten::val shapeMemoryView{emscripten::typed_memory_view(l, rv.data())};
+    shapeMemoryView.call<void>("set", v);
+    TensorShape shape = TensorShape(rv);
+    
+    auto cn = CompNode::load("cpu0");
+    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape);
+    auto ptr = ret->ptr<float>();
+    for(size_t i = 0; i < shape.total_nr_elems(); i++){
+        ptr[i] = 1.0;
+    }
+
+    auto handle = interpreter_for_js->put(*ret, true);
+    auto tensor = std::make_shared<Tensor>(handle);
+    auto id = _engine.registerTensor(tensor);
+    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
+    // mgb_log("register Tensor %d", id);
+    return id;
+}
+
+int EngineWrapper::reshape(int a, const emscripten::val &v, int unspec){
+    SmallVector<size_t> rv;
+    const auto l = v["length"].as<unsigned>();
+    rv.resize(l);
+    emscripten::val memoryView{emscripten::typed_memory_view(l, rv.data())};
+    memoryView.call<void>("set", v);
+    TensorShape shape = TensorShape{l};
+    auto cn = CompNode::load("cpu0");
+    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
+    auto ptr = ret->ptr<int32_t>();
+    for (uint32_t i=0; i<l; i++) {
+        ptr[i] = rv[i];
+    }
+    auto handle = interpreter_for_js->put(*ret, true);
+    // shape tensor
+    auto shapeTensor = std::make_shared<Tensor>(handle);
+
+    auto tensor = getTensor(a);
+    auto op = Reshape::make(unspec != -1 ? unspec : 7);
+    auto outTensor = js::apply(op, tensor.get(), shapeTensor.get())[0];
+    auto id = registerTensor(outTensor);
+    return id; 
+
+}
+
 #endif
 
 int EngineWrapper::registerTensor(std::shared_ptr<Tensor> t){
@@ -169,6 +241,11 @@ int32_t EngineWrapper::getTensorOffset(const int id){
 int32_t EngineWrapper::getGradOffset(const int id){
     auto gradID = getGradID(id);
     return getTensorOffset(gradID);
+}
+
+std::string EngineWrapper::getTensorShape(const int id){
+    auto tensor = getTensor(id);
+    return tensor->shape().to_string();
 }
 
 void printTensor(std::shared_ptr<Tensor> t){
@@ -205,8 +282,11 @@ int EngineWrapper::mul(int a, int b){
     return id;
 }
 
-int EngineWrapper::matmul(int a, int b){
-    auto op = MatrixMul::make();
+int EngineWrapper::matmul(int a, int b, bool transposeA = false, bool transposeB = false){
+    auto op = MatrixMul::make(
+        transposeA, transposeB, 
+        MatrixMul::ComputeMode::DEFAULT, MatrixMul::Format::DEFAULT, 
+        MatrixMul::Strategy::HEURISTIC, 18446744073709551615ull);
     auto tensorA = getTensor(a);
     auto tensorB = getTensor(b);
     auto outTensor = js::apply(op, tensorA.get(), tensorB.get())[0];
@@ -317,12 +397,48 @@ std::shared_ptr<Tensor> flatten(std::shared_ptr<Tensor> t){
     return js::apply(reshape, t.get(), make_shape({-1}))[0];
 }
 
+
 int EngineWrapper::sum(int a){
     auto tensorA = getTensor(a);
     auto op = Reduce::make(Reduce::Mode::SUM, 0, Reduce::DataType::DEFAULT);
     auto outTensor = js::apply(op, flatten(tensorA).get())[0];
     auto id = registerTensor(outTensor);
     return id;
+
+}
+
+int EngineWrapper::conv2d(int a, int w, const int stride, const int padding){
+    auto tensorA = getTensor(a);
+    auto weight = getTensor(w);
+    auto op = Convolution::make(
+        Convolution::Mode::CROSS_CORRELATION, padding, padding, stride, stride, 1, 1, 
+        Convolution::Sparse::DENSE, Convolution::Format::NCHW, Convolution::ComputeMode::DEFAULT, Convolution::Strategy::HEURISTIC, 18446744073709551615ull);
+    auto outTensor = js::apply(op, tensorA.get(), weight.get())[0];
+    auto id = registerTensor(outTensor);
+    return id;
+}
+
+int EngineWrapper::pool(int a, const int kernel, const int stride, const int padding, const int mode){
+    auto tensorA = getTensor(a);
+    auto op = Pooling::make(
+        static_cast<Pooling::Mode>(mode), padding, padding, stride, stride, kernel, kernel, Pooling::Format::NCHW); 
+    auto outTensor = js::apply(op, tensorA.get())[0];
+    auto id = registerTensor(outTensor);
+    return id;
+}
+
+int EngineWrapper::relu(int a){
+    auto op = Elemwise::make(Elemwise::Mode::RELU);
+    auto tensorA = getTensor(a);
+    auto outTensor = js::apply(op, tensorA.get())[0];
+    auto id = registerTensor(outTensor);
+    return id; 
+}
+
+
+std::vector<int> returnVec(){
+    std::vector<int> vec{1,2,3};
+    return vec;
 }
 
 
@@ -336,6 +452,8 @@ EMSCRIPTEN_BINDINGS(Engine) {
     .function("attach", &EngineWrapper::attach)
     .function("backward", &EngineWrapper::backward)
     .function("registerTensor", &EngineWrapper::registerTensorEM)
+    .function("zeros", &EngineWrapper::zeros)
+    .function("ones", &EngineWrapper::ones)
     .function("disposeTensor", &EngineWrapper::disposeTensor)
     .function("getTensorOffset", &EngineWrapper::getTensorOffset)
     .function("getGradOffset", &EngineWrapper::getGradOffset)
@@ -354,7 +472,17 @@ EMSCRIPTEN_BINDINGS(Engine) {
     .function("min", &EngineWrapper::min)
     .function("max", &EngineWrapper::max)
     .function("sum", &EngineWrapper::sum)
+    .function("conv2d", &EngineWrapper::conv2d)
+    .function("pool", &EngineWrapper::pool)
+    .function("relu", &EngineWrapper::relu)
+    .function("reshape", &EngineWrapper::reshape)
+    
+    .function("getTensorShape", &EngineWrapper::getTensorShape)
     ;
+
+    emscripten::function("returnVec", &returnVec);
+
+    emscripten::register_vector<int>("vector<int>");
 }
 #endif
 

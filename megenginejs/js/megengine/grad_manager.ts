@@ -27,11 +27,16 @@ export class GradManager{
   
       // backward
       engine.backward(loss.data);
-  
+
+      for(let tensor of this.attached_tensors){
+        ENGINE.updateGrad(tensor);
+      }
       //clean up
       engine.endScope();
     }
-  
+
+
+    /*
     optimize(lr: Tensor, bs: Tensor){
       for(let tensor of this.attached_tensors){
         ENGINE.updateGrad(tensor);
@@ -40,4 +45,5 @@ export class GradManager{
         // ENGINE.printTensor(tensor, `t<${tensor.data}>: `);
       }
     }
+    */
   }
