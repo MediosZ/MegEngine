@@ -3,7 +3,7 @@ import { ENGINE } from "../engine";
 
 export function CrossEntropy(
     inp: Tensor, 
-    target: number[],
+    target: Tensor,
     axis: number = 1,
     with_logits: boolean = true
     ): Tensor{

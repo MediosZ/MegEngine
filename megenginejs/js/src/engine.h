@@ -60,23 +60,23 @@ public:
     void backward(int32_t id);
 
     #ifdef __EMSCRIPTEN__
-    int registerTensorEM(const emscripten::val &v, const emscripten::val &data);
+    int registerTensorEM(const emscripten::val &v, const emscripten::val &data, const int type);
     int randn(const emscripten::val &v, const float mean, const float std);
-    int ones(const emscripten::val &v);
-    int zeros(const emscripten::val &v);
+    int ones(const emscripten::val &v, int data_type);
+    int zeros(const emscripten::val &v, int data_type);
     int reshape(int a, const emscripten::val &v, int unspec);
     int removeAxis(int a, const emscripten::val &v);
     int addAxis(int a, const emscripten::val &v);
-    int index_one_hot(int a, const emscripten::val &v, int axis);
+    
     #endif
     int registerTensor(std::shared_ptr<Tensor> t);
     int replaceTensor(int id, std::shared_ptr<Tensor> t);
 
     
 
-
-    int32_t getTensorOffset(const int id);
-    int32_t getGradOffset(const int id);
+    int index_one_hot(int a, int index, int axis);
+    int32_t getTensorOffset(const int id, int dtype);
+    int32_t getGradOffset(const int id, int dtype);
     std::shared_ptr<Tensor> getTensor(int id){
         return _engine.getTensor(id);
     }
@@ -112,6 +112,8 @@ public:
     int log(int a);
     int reduce(int a, int mode, int axis);
     int exp(int a);
+
+    int typeCvt(int a, int type);
     
 private:
     Engine _engine;

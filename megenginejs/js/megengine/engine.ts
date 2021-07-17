@@ -2,9 +2,29 @@ import {DType, RecursiveArray, TypedArray} from './dtypes';
 import {inferShape, inferSizeFromShape, flatten} from './utils';
 import {init, MegEngine, setWasmPath} from './backend';
 import {Tensor} from './tensor';
-import { isThisTypeNode } from 'typescript';
+import { idText, isThisTypeNode } from 'typescript';
 
 export {setWasmPath} from './backend';
+
+function isTypeArray(x: any): boolean{
+    return (x instanceof Float32Array) || (x instanceof Float64Array) || (x instanceof Int32Array) || (x instanceof Uint8Array);
+}
+
+function getDateBytes(x: TypedArray) {
+    if(x instanceof Float32Array || x instanceof Int32Array){
+        return 4;
+    }
+    else if(x instanceof Float64Array){
+        return 8;
+    }
+    else if(x instanceof Uint8Array){
+        return 1;
+    }
+    else{
+        throw Error("unkonw data type");
+    }
+    
+}
 
 class Engine{
   tensorMap: Map<number, Tensor>
@@ -36,15 +56,22 @@ class Engine{
     // this.wasm.testBackward();
   }
 
-  tensor(data: RecursiveArray<number>, shape?:number[]): Tensor{
-      let inferedShape = shape || inferShape(data);
-      const shapeBytes = new Int32Array(inferedShape);
-      data = flatten(data);
-      let arrayBuffer = new Float32Array(data);
-
-      let id = this.engine.registerTensor(shapeBytes, arrayBuffer);
-      let memOffset = this.getMemOffset(id);
-      let tensor = new Tensor(id, inferedShape, memOffset, DType.float32);
+  tensor(data: RecursiveArray<number> | TypedArray, shape?:number[], dtype: DType = DType.float32): Tensor{
+      let id;
+      let inferedShape;
+      if(isTypeArray(data)){
+        inferedShape = shape || [(data as TypedArray).length];
+        const shapeBytes = new Int32Array(inferedShape);
+        id = this.engine.registerTensor(shapeBytes, data, dtype);
+      }
+      else{
+        inferedShape = shape || inferShape(data);
+        const shapeBytes = new Int32Array(inferedShape);
+        let arrayBuffer = new Float32Array(flatten(data));
+        id = this.engine.registerTensor(shapeBytes, arrayBuffer, dtype);
+      }
+      let memOffset = this.getMemOffset(id, dtype);
+      let tensor = new Tensor(id, inferedShape, memOffset, dtype);
       this.tensorMap.set(id, tensor);
       return tensor;
   }
@@ -59,12 +86,12 @@ class Engine{
     return out;
   }
 
-  zeros(shape: number[]): Tensor{
+  zeros(shape: number[], dtype: DType = DType.float32): Tensor{
     let inferedShape = shape;
     const shapeBytes = new Int32Array(inferedShape);
-    let outid = this.engine.zeros(shapeBytes);
-    let offset = this.getMemOffset(outid);
-    let out = new Tensor(outid, shape, offset, DType.float32);
+    let outid = this.engine.zeros(shapeBytes, dtype);
+    let offset = this.getMemOffset(outid, dtype);
+    let out = new Tensor(outid, shape, offset, dtype);
     this.tensorMap.set(outid, out);
     return out;
   }
@@ -79,8 +106,8 @@ class Engine{
     return out;
   }
 
-  getMemOffset(id: number): number{
-    return this.engine.getTensorOffset(id);
+  getMemOffset(id: number, dtype: DType = DType.float32): number{
+    return this.engine.getTensorOffset(id, dtype);
   }
 
   getTensorShape(id: number): number[]{
@@ -95,17 +122,23 @@ class Engine{
   }
 
   readSync(tensor: Tensor): TypedArray{
-    const offset = this.getMemOffset(tensor.data);
+    const offset = this.getMemOffset(tensor.data, tensor.dtype);
     // console.log(offset);
     const bytes = this.wasm.HEAPU8.slice(
       offset,
       offset + inferSizeFromShape(tensor.shape) * 4);
-    return new Float32Array(bytes.buffer);
+    if(tensor.dtype == DType.float32){
+        return new Float32Array(bytes.buffer);
+    }
+    else{
+        return new Int32Array(bytes.buffer);
+    }
+    
   }
 
   updateGrad(t: Tensor){
     const grad_id = this.engine.getGrad(t.data);
-    const grad_offset = this.engine.getGradOffset(t.data);
+    const grad_offset = this.engine.getGradOffset(t.data, t.dtype);
     t.grad = new Tensor(grad_id, t.shape, grad_offset, t.dtype);
   }
 
@@ -259,8 +292,8 @@ class Engine{
       });
 
       let outID = this.engine.reshape(a.data, shape, (unspec_axis === undefined) ? -1 : unspec_axis);
-      let offset = this.getMemOffset(outID);
-      let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
+      let offset = this.getMemOffset(outID, a.dtype);
+      let out = new Tensor(outID, this.getTensorShape(outID), offset, a.dtype);
       this.tensorMap.set(outID, out);
       return out;
   }
@@ -339,10 +372,12 @@ class Engine{
       return this.reshape(t, [-1]);
   }
 
-  index_one_hot(t: Tensor, index: number[], axis: number = 1, keepdims: boolean = false){
-    let outID = this.engine.index_one_hot(t.data, index, axis);
-    let offset = this.getMemOffset(outID);
-    let out = new Tensor(outID, this.getTensorShape(outID), offset, DType.float32);
+  index_one_hot(t: Tensor, index: Tensor, axis: number = 1, keepdims: boolean = false){
+      console.log("before")
+    let outID = this.engine.index_one_hot(t.data, index.data, axis);
+    console.log("after")
+    let offset = this.getMemOffset(outID, t.dtype);
+    let out = new Tensor(outID, this.getTensorShape(outID), offset, t.dtype);
     this.tensorMap.set(outID, out);
     if(keepdims){
         return out;
@@ -365,6 +400,19 @@ class Engine{
             this.sum(this.exp(t.sub(maxValue)), axis, keepdims)
         ));
     }
+  }
+
+  astype(t:Tensor, dtype: DType): Tensor{
+      if(t.dtype === dtype){
+          return t;
+      }
+      else{
+        let outID = this.engine.astype(t.data, dtype);
+        let offset = this.getMemOffset(outID, dtype);
+        let out = new Tensor(outID, this.getTensorShape(outID), offset, dtype);
+        this.tensorMap.set(outID, out);
+        return out;
+      }
   }
 
   cleanup(){

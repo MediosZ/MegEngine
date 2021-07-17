@@ -1,3 +1,4 @@
+import { isEntityName } from "typescript";
 import { DType, TypedArray } from "./dtypes";
 import {ENGINE} from './engine';
 
@@ -67,6 +68,10 @@ export class Tensor extends Parameter{
 
   square(): Tensor{
     return ENGINE.square(this);
+  }
+
+  slice(...args: string[]): Tensor{
+      return ENGINE.zeros([1]);
   }
 
   

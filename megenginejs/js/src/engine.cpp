@@ -3,6 +3,30 @@
 
 namespace mgb::imperative::js {
 
+DType getDataType(int d){
+    switch (d)
+    {
+    case 0:
+        return dtype::Float32();
+        break;
+    case 1:
+        return dtype::Int32();
+        break;
+    case 2:
+        return dtype::Int8();
+        break;
+    case 3:
+        return dtype::Uint8();
+        break;
+    default:
+        return dtype::Float32();
+        break;
+    }
+}
+
+
+
+
 Engine& Engine::inst() {
     static Engine inst_;
     return inst_;
@@ -88,27 +112,29 @@ void EngineWrapper::backward(int32_t id){
 
 
 #ifdef __EMSCRIPTEN__
-int EngineWrapper::registerTensorEM(const emscripten::val &v, const emscripten::val &data){
+int EngineWrapper::registerTensorEM(const emscripten::val &v, const emscripten::val &data, const int type = 0){
     SmallVector<size_t> rv;
     const auto l = v["length"].as<unsigned>();
     rv.resize(l);
     emscripten::val shapeMemoryView{emscripten::typed_memory_view(l, rv.data())};
     shapeMemoryView.call<void>("set", v);
 
-    SmallVector<float> rdata;
-    const auto ldata = data["length"].as<unsigned>();
-    rdata.resize(ldata);
-    emscripten::val dataMemoryView{emscripten::typed_memory_view(ldata, rdata.data())};
-    dataMemoryView.call<void>("set", data);
-
     TensorShape shape = TensorShape(rv);
     
     auto cn = CompNode::load("cpu0");
-    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape);
+    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, getDataType(type));
     auto ptr = ret->ptr<float>();
+    // SmallVector<float> rdata;
+    const auto ldata = data["length"].as<unsigned>();
+    // rdata.resize(ldata);
+    emscripten::val dataMemoryView{emscripten::typed_memory_view(ldata, ptr)};
+    dataMemoryView.call<void>("set", data);
+
+    /*
     for(size_t i = 0; i < shape.total_nr_elems(); i++){
         ptr[i] = rdata[i];
     }
+    */
 
     auto handle = interpreter_for_js->put(*ret, true);
     auto tensor = std::make_shared<Tensor>(handle);
@@ -144,20 +170,29 @@ int EngineWrapper::randn(const emscripten::val &v, const float mean, const float
     return id;
 }
 
-int EngineWrapper::zeros(const emscripten::val &v){
+int EngineWrapper::zeros(const emscripten::val &v, int data_type = 0){
     SmallVector<size_t> rv;
     const auto l = v["length"].as<unsigned>();
     rv.resize(l);
     emscripten::val shapeMemoryView{emscripten::typed_memory_view(l, rv.data())};
     shapeMemoryView.call<void>("set", v);
     TensorShape shape = TensorShape(rv);
-    
+
     auto cn = CompNode::load("cpu0");
-    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape);
-    auto ptr = ret->ptr<float>();
-    for(size_t i = 0; i < shape.total_nr_elems(); i++){
-        ptr[i] = 0.0;
+    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, getDataType(data_type));
+    if(data_type == 0){
+        auto ptr = ret->ptr<float>();
+        for(size_t i = 0; i < shape.total_nr_elems(); i++){
+            ptr[i] = 0.0;
+        }
     }
+    else{
+        auto ptr = ret->ptr<int32_t>();
+        for(size_t i = 0; i < shape.total_nr_elems(); i++){
+            ptr[i] = 0;
+        } 
+    }
+
 
     auto handle = interpreter_for_js->put(*ret, true);
     auto tensor = std::make_shared<Tensor>(handle);
@@ -167,7 +202,7 @@ int EngineWrapper::zeros(const emscripten::val &v){
     return id;
 }
 
-int EngineWrapper::ones(const emscripten::val &v){
+int EngineWrapper::ones(const emscripten::val &v, int data_type = 0){
     SmallVector<size_t> rv;
     const auto l = v["length"].as<unsigned>();
     rv.resize(l);
@@ -176,7 +211,7 @@ int EngineWrapper::ones(const emscripten::val &v){
     TensorShape shape = TensorShape(rv);
     
     auto cn = CompNode::load("cpu0");
-    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape);
+    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, getDataType(data_type));
     auto ptr = ret->ptr<float>();
     for(size_t i = 0; i < shape.total_nr_elems(); i++){
         ptr[i] = 1.0;
@@ -242,31 +277,21 @@ int EngineWrapper::addAxis(int a, const emscripten::val &v){
     return id;
 }
 
-int EngineWrapper::index_one_hot(int a, const emscripten::val &v, int axis){
-    SmallVector<size_t> rv;
-    const auto l = v["length"].as<unsigned>();
-    rv.resize(l);
-    emscripten::val memoryView{emscripten::typed_memory_view(l, rv.data())};
-    memoryView.call<void>("set", v);
-    TensorShape shape = TensorShape{l};
-    auto cn = CompNode::load("cpu0");
-    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
-    auto ptr = ret->ptr<int32_t>();
-    for (uint32_t i=0; i<l; i++) {
-        ptr[i] = rv[i];
-    }
-    auto handle = interpreter_for_js->put(*ret, true);
-    // shape tensor
-    auto indexTensor = std::make_shared<Tensor>(handle);
+#endif
 
+
+
+
+int EngineWrapper::index_one_hot(int a, int index, int axis){
     auto tensorA = getTensor(a);
+    auto indexTensor = getTensor(index);
     auto op = IndexingOneHot::make(axis);
+    mgb_log("before apply");
     auto outTensor = js::apply(op, tensorA.get(), indexTensor.get())[0];
+    mgb_log("after apply");
     auto id = registerTensor(outTensor);
     return id;
 }
-
-#endif
 
 int EngineWrapper::registerTensor(std::shared_ptr<Tensor> t){
     auto id = _engine.registerTensor(t);
@@ -279,19 +304,33 @@ int EngineWrapper::replaceTensor(int id, std::shared_ptr<Tensor> t){
 }
 
 
-int32_t EngineWrapper::getTensorOffset(const int id){
+int32_t EngineWrapper::getTensorOffset(const int id, int dtype){
     auto tensor = getTensor(id);
-    auto ptr = tensor->value().ptr<float>();
-    #ifdef __EMSCRIPTEN__
-    return reinterpret_cast<int32_t>(ptr);
-    #else 
-    return reinterpret_cast<uintptr_t>(ptr);
-    #endif
+    auto type = tensor->dtype();
+    if(dtype == 0){
+        auto ptr = tensor->value().ptr<float>();
+            
+        #ifdef __EMSCRIPTEN__
+        return reinterpret_cast<int32_t>(ptr);
+        #else 
+        return reinterpret_cast<uintptr_t>(ptr);
+        #endif
+    }
+    else{
+        auto ptr = tensor->value().ptr<int32_t>();
+            
+        #ifdef __EMSCRIPTEN__
+        return reinterpret_cast<int32_t>(ptr);
+        #else 
+        return reinterpret_cast<uintptr_t>(ptr);
+        #endif 
+    }
+
 }
 
-int32_t EngineWrapper::getGradOffset(const int id){
+int32_t EngineWrapper::getGradOffset(const int id, int dtype){
     auto gradID = getGradID(id);
-    return getTensorOffset(gradID);
+    return getTensorOffset(gradID, dtype);
 }
 
 std::string EngineWrapper::getTensorShape(const int id){
@@ -485,6 +524,14 @@ int EngineWrapper::exp(int a){
     return id; 
 }
 
+int EngineWrapper::typeCvt(int a, int type){
+    auto op = TypeCvt::make(getDataType(type));
+    auto tensorA = getTensor(a);
+    auto outTensor = js::apply(op, tensorA.get())[0];
+    auto id = registerTensor(outTensor);
+    return id;
+}
+
 
 
 #ifdef __EMSCRIPTEN__
@@ -523,6 +570,7 @@ EMSCRIPTEN_BINDINGS(Engine) {
     .function("index_one_hot", &EngineWrapper::index_one_hot)
     .function("exp", &EngineWrapper::exp)
     .function("getTensorShape", &EngineWrapper::getTensorShape)
+    .function("astype", &EngineWrapper::typeCvt)
     ;
 
 }
