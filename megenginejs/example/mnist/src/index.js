@@ -31,40 +31,18 @@ class Lenet extends Module{
 async function run() {
     setWasmPath(wasmPath);
     console.log("Running Megenginejs");
-
     await ENGINE.init();
-
-    let arr = Int32Array.from([1,2,3,4,5,6]);
-    console.log(arr);
-    let ten = ENGINE.tensor(arr);
-    console.log(ten);
-    ENGINE.printTensor(ten)
-    let res = ENGINE.reshape(ten, [2,3]);
-    console.log(res);
-    ENGINE.printTensor(res)
-
-    /*
-    let arr = [1,2,3, 4, 5, 6];
-    console.log(arr);
-    let ten = ENGINE.tensor(arr);
-    console.log(ten);
-    ENGINE.printTensor(ten)
-    let res = ENGINE.reshape(ten, [2,3]);
-    console.log(res);
-    ENGINE.printTensor(res)
-    */
-    /*
-    let mnistData = new MnistData(100);
+    let batch_size = 500;
+    let mnistData = new MnistData(batch_size);
     await mnistData.load();
     console.log("load mnist");
     
     let lenet = new Lenet();
-
     let gm = new GradManager().attach(lenet.parameters());
-    let opt = SGD(lenet.parameters(), 0.001);
+    let opt = SGD(lenet.parameters(), 0.1);
 
     for(let i = 0; i < 1; i++){
-      console.log(`epoch ${i}`);
+      // console.log(`epoch ${i}`);
       let trainGen = mnistData.getTrainData();
       while(true){
           let {value, done} = trainGen.next();
@@ -72,26 +50,19 @@ async function run() {
               break;
           }
   
-          let input = ENGINE.reshape(ENGINE.tensor(value["data"]), [100, 1, 28, 28]);
-          console.log(input.shape)
-          let label = ENGINE.tensor(value["label"])// ENGINE.reshape(, [100, 10]);
-          console.log(label.shape)
+          let input = ENGINE.reshape(ENGINE.tensor(value["data"]), [batch_size, 1, 28, 28]);
+          let label = ENGINE.argmax(ENGINE.astype(ENGINE.reshape(ENGINE.tensor(value["label"]), [batch_size, 10]), DType.int32), 1);
           
-          ENGINE.printTensor(label);
           gm.backward(() => {
             let out = lenet.forward(input);
-            console.log(out.shape)
             let loss =  CrossEntropy(out, label)
-            console.log("finish")
-            //ENGINE.printTensor(loss, "Loss is ");
+            ENGINE.printTensor(loss, "Loss is ");
             return loss;
           })
-          // opt.step();
-          break;
+          opt.step();
+
       }
     };
-
-    */
     ENGINE.cleanup();
 }
 

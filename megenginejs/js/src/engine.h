@@ -114,6 +114,7 @@ public:
     int exp(int a);
 
     int typeCvt(int a, int type);
+    int argmax(int a, int axis);
     
 private:
     Engine _engine;

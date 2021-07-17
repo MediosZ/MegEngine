@@ -123,12 +123,30 @@ int EngineWrapper::registerTensorEM(const emscripten::val &v, const emscripten::
     
     auto cn = CompNode::load("cpu0");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, getDataType(type));
-    auto ptr = ret->ptr<float>();
-    // SmallVector<float> rdata;
     const auto ldata = data["length"].as<unsigned>();
-    // rdata.resize(ldata);
-    emscripten::val dataMemoryView{emscripten::typed_memory_view(ldata, ptr)};
-    dataMemoryView.call<void>("set", data);
+    if(type == 0){
+        auto ptr = ret->ptr<float>();
+        emscripten::val dataMemoryView{emscripten::typed_memory_view(ldata, ptr)};
+        dataMemoryView.call<void>("set", data);
+    }
+    else if(type == 1){
+        auto ptr = ret->ptr<int32_t>();
+        emscripten::val dataMemoryView{emscripten::typed_memory_view(ldata, ptr)};
+        dataMemoryView.call<void>("set", data);
+    }
+    else if(type == 2){
+        auto ptr = ret->ptr<int8_t>();
+        emscripten::val dataMemoryView{emscripten::typed_memory_view(ldata, ptr)};
+        dataMemoryView.call<void>("set", data);
+    }
+    else if(type == 3){
+        auto ptr = ret->ptr<uint8_t>();
+        emscripten::val dataMemoryView{emscripten::typed_memory_view(ldata, ptr)};
+        dataMemoryView.call<void>("set", data);
+    }
+    else{
+        throw std::runtime_error("Unknown type");
+    }
 
     /*
     for(size_t i = 0; i < shape.total_nr_elems(); i++){
@@ -186,11 +204,26 @@ int EngineWrapper::zeros(const emscripten::val &v, int data_type = 0){
             ptr[i] = 0.0;
         }
     }
-    else{
+    else if(data_type == 1){
         auto ptr = ret->ptr<int32_t>();
         for(size_t i = 0; i < shape.total_nr_elems(); i++){
             ptr[i] = 0;
         } 
+    }
+    else if(data_type == 2){
+        auto ptr = ret->ptr<int8_t>();
+        for(size_t i = 0; i < shape.total_nr_elems(); i++){
+            ptr[i] = 0;
+        } 
+    }
+    else if(data_type == 3){
+        auto ptr = ret->ptr<uint8_t>();
+        for(size_t i = 0; i < shape.total_nr_elems(); i++){
+            ptr[i] = 0;
+        } 
+    }
+    else{
+        throw std::runtime_error("Unknown type");
     }
 
 
@@ -212,9 +245,32 @@ int EngineWrapper::ones(const emscripten::val &v, int data_type = 0){
     
     auto cn = CompNode::load("cpu0");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, getDataType(data_type));
-    auto ptr = ret->ptr<float>();
-    for(size_t i = 0; i < shape.total_nr_elems(); i++){
-        ptr[i] = 1.0;
+    if(data_type == 0){
+        auto ptr = ret->ptr<float>();
+        for(size_t i = 0; i < shape.total_nr_elems(); i++){
+            ptr[i] = 0.0;
+        }
+    }
+    else if(data_type == 1){
+        auto ptr = ret->ptr<int32_t>();
+        for(size_t i = 0; i < shape.total_nr_elems(); i++){
+            ptr[i] = 0;
+        } 
+    }
+    else if(data_type == 2){
+        auto ptr = ret->ptr<int8_t>();
+        for(size_t i = 0; i < shape.total_nr_elems(); i++){
+            ptr[i] = 0;
+        } 
+    }
+    else if(data_type == 3){
+        auto ptr = ret->ptr<uint8_t>();
+        for(size_t i = 0; i < shape.total_nr_elems(); i++){
+            ptr[i] = 0;
+        } 
+    }
+    else{
+        throw std::runtime_error("Unknown type");
     }
 
     auto handle = interpreter_for_js->put(*ret, true);
@@ -286,9 +342,7 @@ int EngineWrapper::index_one_hot(int a, int index, int axis){
     auto tensorA = getTensor(a);
     auto indexTensor = getTensor(index);
     auto op = IndexingOneHot::make(axis);
-    mgb_log("before apply");
     auto outTensor = js::apply(op, tensorA.get(), indexTensor.get())[0];
-    mgb_log("after apply");
     auto id = registerTensor(outTensor);
     return id;
 }
@@ -306,7 +360,6 @@ int EngineWrapper::replaceTensor(int id, std::shared_ptr<Tensor> t){
 
 int32_t EngineWrapper::getTensorOffset(const int id, int dtype){
     auto tensor = getTensor(id);
-    auto type = tensor->dtype();
     if(dtype == 0){
         auto ptr = tensor->value().ptr<float>();
             
@@ -316,14 +369,32 @@ int32_t EngineWrapper::getTensorOffset(const int id, int dtype){
         return reinterpret_cast<uintptr_t>(ptr);
         #endif
     }
-    else{
+    else if(dtype == 1){
         auto ptr = tensor->value().ptr<int32_t>();
-            
         #ifdef __EMSCRIPTEN__
         return reinterpret_cast<int32_t>(ptr);
         #else 
         return reinterpret_cast<uintptr_t>(ptr);
         #endif 
+    }
+    else if(dtype == 2){
+        auto ptr = tensor->value().ptr<int8_t>();
+        #ifdef __EMSCRIPTEN__
+        return reinterpret_cast<int32_t>(ptr);
+        #else 
+        return reinterpret_cast<uintptr_t>(ptr);
+        #endif 
+    }
+    else if(dtype == 3){
+        auto ptr = tensor->value().ptr<uint8_t>();
+        #ifdef __EMSCRIPTEN__
+        return reinterpret_cast<int32_t>(ptr);
+        #else 
+        return reinterpret_cast<uintptr_t>(ptr);
+        #endif 
+    }
+    else{
+        throw std::runtime_error("Unknown type");
     }
 
 }
@@ -532,6 +603,14 @@ int EngineWrapper::typeCvt(int a, int type){
     return id;
 }
 
+int EngineWrapper::argmax(int a, int axis){
+    auto op = Argmax::make(axis);
+    auto tensorA = getTensor(a);
+    auto outTensor = js::apply(op, tensorA.get())[0];
+    auto id = registerTensor(outTensor);
+    return id;
+}
+
 
 
 #ifdef __EMSCRIPTEN__
@@ -571,6 +650,7 @@ EMSCRIPTEN_BINDINGS(Engine) {
     .function("exp", &EngineWrapper::exp)
     .function("getTensorShape", &EngineWrapper::getTensorShape)
     .function("astype", &EngineWrapper::typeCvt)
+    .function("argmax", &EngineWrapper::argmax)
     ;
 
 }
