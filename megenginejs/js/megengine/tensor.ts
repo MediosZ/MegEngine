@@ -11,6 +11,7 @@ export class Tensor extends Parameter{
   shape: number[];
   offset: number;
   requires_grad: boolean
+  scopeid: number
 
   constructor(data:number, shape: number[], offset: number,
       dtype: DType = DType.float32){
@@ -20,6 +21,7 @@ export class Tensor extends Parameter{
       this.shape = shape
       this.offset = offset
       this.requires_grad = true
+      this.scopeid = -1;
   }
 
   add(b: Tensor | number): Tensor{

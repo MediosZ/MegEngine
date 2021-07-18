@@ -8,7 +8,9 @@ class _SGD extends BaseOptimizer{
     }
 
     update(t: Tensor, grad: Tensor){
-        t.sub_(grad.mul(this.learning_rate));
+        ENGINE.tidy(() => {
+            t.sub_(grad.mul(this.learning_rate));
+        });
     }
 }
 

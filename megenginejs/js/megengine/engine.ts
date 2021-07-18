@@ -16,14 +16,25 @@ interface TensorInfo {
     dtype: DType;
 }
 
+interface ScopeState {
+    track: Tensor[];
+    name: string;
+    id: number;
+}
+
 class Engine{
   tensorMap: Map<number, Tensor>
   wasm: MegEngine
   engine: object
   opRegistry: Map<string, Function>
+  scopeStack: ScopeState[]
+  activeScope: ScopeState
+  nextScopeId: number
 
   constructor(){
       this.tensorMap = new Map<number, Tensor>();
+      this.scopeStack = [];
+      this.nextScopeId = 0;
   }
 
   async init(){
@@ -49,8 +60,18 @@ class Engine{
       }
       let memOffset = this.getMemOffset(id, dtype);
       let tensor = new Tensor(id, inferedShape, memOffset, dtype);
+      this.track(tensor);
       this.tensorMap.set(id, tensor);
       return tensor;
+  }
+
+  track(t: Tensor): Tensor{
+    if (this.activeScope != null) {
+        t.scopeid = this.activeScope.id;
+        this.activeScope.track.push(t);
+      }
+  
+      return t;
   }
 
   rand(shape: number[], mean: number = 0.0, std: number = 1.0, dtype: DType = DType.float32): Tensor{
@@ -59,6 +80,7 @@ class Engine{
     let outid = this.engine.randn(shapeBytes, mean, std);
     let offset = this.getMemOffset(outid, dtype);
     let out = new Tensor(outid, shape, offset, dtype);
+    this.track(out);
     this.tensorMap.set(outid, out);
     return out;
   }
@@ -69,6 +91,7 @@ class Engine{
     let outid = this.engine.zeros(shapeBytes, dtype);
     let offset = this.getMemOffset(outid, dtype);
     let out = new Tensor(outid, shape, offset, dtype);
+    this.track(out);
     this.tensorMap.set(outid, out);
     return out;
   }
@@ -79,6 +102,7 @@ class Engine{
     let outid = this.engine.ones(shapeBytes);
     let offset = this.getMemOffset(outid, dtype);
     let out = new Tensor(outid, shape, offset, dtype);
+    this.track(out);
     this.tensorMap.set(outid, out);
     return out;
   }
@@ -139,6 +163,7 @@ class Engine{
   }
 
   disposeTensor(t: Tensor){
+    this.tensorMap.delete(t.data);
     this.engine.disposeTensor(t.data);
   }
 
@@ -153,6 +178,7 @@ class Engine{
     let outID = this.engine.add(tensorA.data, tensorB.data);
     let offset = this.getMemOffset(outID, tensorA.dtype);
     let out = new Tensor(outID, this.getTensorShape(outID), offset, tensorA.dtype);
+    this.track(out);
     this.tensorMap.set(outID, out);
     return out;
   }
@@ -163,6 +189,7 @@ class Engine{
     let outID = this.engine.sub(tensorA.data, tensorB.data);
     let offset = this.getMemOffset(outID, tensorA.dtype);
     let out = new Tensor(outID, this.getTensorShape(outID), offset, tensorA.dtype);
+    this.track(out);
     this.tensorMap.set(outID, out);
     return out;
   }
@@ -181,6 +208,7 @@ class Engine{
     let outID = this.engine.mul(tensorA.data, tensorB.data);
     let offset = this.getMemOffset(outID, tensorA.dtype);
     let out = new Tensor(outID, this.getTensorShape(outID), offset, tensorA.dtype);
+    this.track(out);
     this.tensorMap.set(outID, out);
     return out;
   }
@@ -190,6 +218,7 @@ class Engine{
     let outID = this.engine.div(tensorA.data, tensorB.data);
     let offset = this.getMemOffset(outID, tensorA.dtype);
     let out = new Tensor(outID, this.getTensorShape(outID), offset, tensorA.dtype);
+    this.track(out);
     this.tensorMap.set(outID, out);
     return out;
   }
@@ -199,6 +228,7 @@ class Engine{
     let outID = this.engine.matmul(a.data, b.data, transposeA, transposeB);
     let offset = this.getMemOffset(outID, a.dtype);
     let out = new Tensor(outID, this.getTensorShape(outID), offset, a.dtype);
+    this.track(out);
     this.tensorMap.set(outID, out);
     return out;
   }
@@ -207,6 +237,7 @@ class Engine{
     let outID = this.engine.sin(a.data);
     let offset = this.getMemOffset(outID, a.dtype);
     let out = new Tensor(outID, this.getTensorShape(outID), offset, a.dtype);
+    this.track(out);
     this.tensorMap.set(outID, out);
     return out;
   }
@@ -216,6 +247,7 @@ class Engine{
     let outID = this.engine.log(a.data);
     let offset = this.getMemOffset(outID, a.dtype);
     let out = new Tensor(outID, this.getTensorShape(outID), offset,a.dtype);
+    this.track(out);
     this.tensorMap.set(outID, out);
     return out;
   }
@@ -224,6 +256,7 @@ class Engine{
     let outID = this.engine.cos(a.data);
     let offset = this.getMemOffset(outID, a.dtype);
     let out = new Tensor(outID, this.getTensorShape(outID), offset, a.dtype);
+    this.track(out);
     this.tensorMap.set(outID, out);
     return out;
   }
@@ -248,6 +281,7 @@ class Engine{
     let outID = this.engine.relu(a.data);
     let offset = this.getMemOffset(outID, a.dtype);
     let out = new Tensor(outID, this.getTensorShape(outID), offset, a.dtype);
+    this.track(out);
     this.tensorMap.set(outID, out);
     return out;
   }
@@ -256,6 +290,7 @@ class Engine{
     let outID = this.engine.exp(a.data);
     let offset = this.getMemOffset(outID, a.dtype);
     let out = new Tensor(outID, this.getTensorShape(outID), offset, a.dtype);
+    this.track(out);
     this.tensorMap.set(outID, out);
     return out;
   }
@@ -277,6 +312,7 @@ class Engine{
       let outID = this.engine.reshape(a.data, shape, (unspec_axis === undefined) ? -1 : unspec_axis);
       let offset = this.getMemOffset(outID, a.dtype);
       let out = new Tensor(outID, this.getTensorShape(outID), offset, a.dtype);
+      this.track(out);
       this.tensorMap.set(outID, out);
       return out;
   }
@@ -288,6 +324,7 @@ class Engine{
     let outID = this.engine.removeAxis(a.data, ax);
     let offset = this.getMemOffset(outID, a.dtype);
     let out = new Tensor(outID, this.getTensorShape(outID), offset, a.dtype);
+    this.track(out);
     this.tensorMap.set(outID, out);
     return out; 
   }
@@ -296,6 +333,7 @@ class Engine{
     let outID = this.engine.addAxis(a.data, axis);
     let offset = this.getMemOffset(outID, a.dtype);
     let out = new Tensor(outID, this.getTensorShape(outID), offset, a.dtype);
+    this.track(out);
     this.tensorMap.set(outID, out);
     return out; 
   }
@@ -329,6 +367,7 @@ class Engine{
             let outID = this.engine.reduce(fla.data, mode, 0);
             let offset = this.getMemOffset(outID, a.dtype);
             let out = new Tensor(outID, this.getTensorShape(outID), offset, a.dtype);
+            this.track(out);
             this.tensorMap.set(outID, out);
             return out;
         }
@@ -336,6 +375,7 @@ class Engine{
             let outID = this.engine.reduce(a.data, mode, axis);
             let offset = this.getMemOffset(outID, a.dtype);
             let out = new Tensor(outID, this.getTensorShape(outID), offset, a.dtype);
+            this.track(out);
             this.tensorMap.set(outID, out);
             if(!keepdims){
                 let axis: number[] = [];
@@ -359,6 +399,7 @@ class Engine{
     let outID = this.engine.index_one_hot(t.data, index.data, axis);
     let offset = this.getMemOffset(outID, t.dtype);
     let out = new Tensor(outID, this.getTensorShape(outID), offset, t.dtype);
+    this.track(out);
     this.tensorMap.set(outID, out);
     if(keepdims){
         return out;
@@ -391,6 +432,7 @@ class Engine{
         let outID = this.engine.astype(t.data, dtype);
         let offset = this.getMemOffset(outID, dtype);
         let out = new Tensor(outID, this.getTensorShape(outID), offset, dtype);
+        this.track(out);
         this.tensorMap.set(outID, out);
         return out;
       }
@@ -405,6 +447,7 @@ class Engine{
         let outID = this.engine.argmax(flatten.data, 0);
         let offset = this.getMemOffset(outID, t.dtype);
         let out = new Tensor(outID, this.getTensorShape(outID), offset, t.dtype);
+        this.track(out);
         this.tensorMap.set(outID, out);
         return out;
     }
@@ -412,6 +455,7 @@ class Engine{
         let outID = this.engine.argmax(t.data, axis);
         let offset = this.getMemOffset(outID, t.dtype);
         let out = new Tensor(outID, this.getTensorShape(outID), offset, t.dtype);
+        this.track(out);
         this.tensorMap.set(outID, out);
         if(keepdims){
             return out;
@@ -420,7 +464,60 @@ class Engine{
     }
   }
 
+  startScope(name?: string) {
+    const scopeInfo: ScopeState = {
+      track: [],
+      name: 'unnamed scope',
+      id: this.nextScopeId++
+    };
+    this.scopeStack.push(scopeInfo);
+    this.activeScope = scopeInfo;
+  }
+
+  endScope(result?: Tensor) {
+    // console.log("exit scope: ", this.activeScope.id, this.activeScope.track);
+    // Dispose the arrays tracked in this scope.
+    for (let i = 0; i < this.activeScope.track.length; i++) {
+      const tensor = this.activeScope.track[i];
+      if (!result || tensor.data !== result.data) {
+        // console.log("Disposing of ", tensor);
+        ENGINE.disposeTensor(tensor); // tensor.dispose();
+      }
+    }
+    
+    const oldScope = this.scopeStack.pop();
+    this.activeScope = this.scopeStack.length === 0 ?
+        null :
+        this.scopeStack[this.scopeStack.length - 1];
+    if(result && result.scopeid == oldScope.id){
+        this.track(result);
+    }
+  }
+
+
+  tidy(fn: Function): Tensor{
+    let result: Tensor;
+    return this.scopedRun(
+        () => this.startScope(), () => this.endScope(result), () => {
+            result = fn();
+            return result;
+        });
+  }
+
+  scopedRun(start: () => void, end: () => void, f: () => Tensor): Tensor {
+    start();
+    try {
+      const res = f();
+      end();
+      return res;
+    } catch (ex) {
+      end();
+      throw ex;
+    }
+  }
+
   cleanup(){
+      // console.log(this.tensorMap);
       this.engine.delete();
   }
 }

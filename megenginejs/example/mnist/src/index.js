@@ -19,12 +19,15 @@ class Lenet extends Module{
         this.classifier = Linear(84, 10);
     }
     forward(inp){
-        let x = this.relu.forward(this.pool.forward(this.conv1.forward(inp)));
-        x = this.relu.forward(this.pool.forward(this.conv2.forward(x)));
-        x = ENGINE.reshape(x, [x.shape[0], -1]);
-        x = this.relu.forward(this.fc1.forward(x));
-        x = this.relu.forward(this.fc2.forward(x));
-        return this.classifier.forward(x);
+        // return ENGINE.tidy(() => {
+            let x = this.conv1.forward(inp) //this.relu.forward(this.pool.forward(this.conv1.forward(inp)));
+            return x;
+            x = this.relu.forward(this.pool.forward(this.conv2.forward(x)));
+            x = ENGINE.reshape(x, [x.shape[0], -1]);
+            x = this.relu.forward(this.fc1.forward(x));
+            x = this.relu.forward(this.fc2.forward(x));
+            return this.classifier.forward(x);
+        // });
     }
 }
 
@@ -32,37 +35,46 @@ async function run() {
     setWasmPath(wasmPath);
     console.log("Running Megenginejs");
     await ENGINE.init();
+
     let batch_size = 500;
     let mnistData = new MnistData(batch_size);
     await mnistData.load();
     console.log("load mnist");
-    
     let lenet = new Lenet();
     let gm = new GradManager().attach(lenet.parameters());
-    let opt = SGD(lenet.parameters(), 0.1);
+    let opt = SGD(lenet.parameters(), 0.03);
 
     for(let i = 0; i < 1; i++){
-      // console.log(`epoch ${i}`);
+      console.log(`epoch ${i}`);
       let trainGen = mnistData.getTrainData();
       while(true){
           let {value, done} = trainGen.next();
           if(done){
               break;
           }
-  
-          let input = ENGINE.reshape(ENGINE.tensor(value["data"]), [batch_size, 1, 28, 28]);
-          let label = ENGINE.argmax(ENGINE.astype(ENGINE.reshape(ENGINE.tensor(value["label"]), [batch_size, 10]), DType.int32), 1);
           
+          let input = ENGINE.tidy(() => ENGINE.reshape(ENGINE.tensor(value["data"]), [batch_size, 1, 28, 28]));
+          let label = ENGINE.tidy(() => ENGINE.argmax(ENGINE.astype(ENGINE.reshape(ENGINE.tensor(value["label"]), [batch_size, 10]), DType.int32), 1));
+          console.log(input);
+          let out = lenet.forward(input);
+            // let loss =  CrossEntropy(out, label)
+            // ENGINE.printTensor(loss, "Loss is ");
+            // return loss;
+          break
           gm.backward(() => {
-            let out = lenet.forward(input);
-            let loss =  CrossEntropy(out, label)
-            ENGINE.printTensor(loss, "Loss is ");
-            return loss;
+            return ENGINE.tidy(() => {
+                let out = lenet.forward(input);
+                let loss =  CrossEntropy(out, label)
+                ENGINE.printTensor(loss, "Loss is ");
+                return loss;
+            });
           })
           opt.step();
-
+          ENGINE.disposeTensor(input);
+          ENGINE.disposeTensor(label);
       }
     };
+    
     ENGINE.cleanup();
 }
 

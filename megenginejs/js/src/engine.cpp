@@ -73,9 +73,12 @@ EngineWrapper::EngineWrapper(){
 }
 
 void EngineWrapper::disposeTensor(int id){
+    // mgb_log("disposeTensor %d", id);
     auto tensor = getTensorWrapper(id);
     _engine.disposeTensor(tensor->_tensor);
-    _engine.disposeTensor(tensor->_grad);
+    if(tensor->_grad == -1){
+        _engine.disposeTensor(tensor->_grad);
+    }
     _tensor_wrapper_registry->erase(id);
 }
 
@@ -83,8 +86,17 @@ void EngineWrapper::attach(int32_t id){
     auto tensor_wrapper = getTensorWrapper(id);
     auto tensor = getTensor(id);
     _engine.attach(tensor.get(), [tensor_wrapper, this](std::shared_ptr<Tensor> grad){
-        auto id = _engine.registerTensor(std::move(grad));
-        tensor_wrapper->_grad = id;
+        // there is no grad in current tensor
+        if(tensor_wrapper->_grad == -1){
+            auto id = _engine.registerTensor(std::move(grad));
+            tensor_wrapper->_grad = id;
+        }
+        //replace old grad
+        else{
+            // mgb_log("replace grad %d", tensor_wrapper->_grad);
+            this->replaceTensor(tensor_wrapper->_grad, std::move(grad));
+        }
+
     });
     // mgb_log("Attach Tensor %d", id);
 }
@@ -361,8 +373,9 @@ int EngineWrapper::replaceTensor(int id, std::shared_ptr<Tensor> t){
 int32_t EngineWrapper::getTensorOffset(const int id, int dtype){
     auto tensor = getTensor(id);
     if(dtype == 0){
+        mgb_log("about to get offset");
         auto ptr = tensor->value().ptr<float>();
-            
+        mgb_log("get offset");
         #ifdef __EMSCRIPTEN__
         return reinterpret_cast<int32_t>(ptr);
         #else 

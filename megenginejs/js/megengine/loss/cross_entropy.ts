@@ -7,12 +7,14 @@ export function CrossEntropy(
     axis: number = 1,
     with_logits: boolean = true
     ): Tensor{
-    if(with_logits){
-        return ENGINE.logsumexp(inp, axis).mean().sub(
-            ENGINE.index_one_hot(inp, target, axis).mean()
-        );
-    }
-    else{
-        return ENGINE.zeros([1]).sub(ENGINE.log(ENGINE.index_one_hot(inp, target, axis)).mean());
+    return ENGINE.tidy(() => {
+        if(with_logits){
+            return ENGINE.logsumexp(inp, axis).mean().sub(
+                ENGINE.index_one_hot(inp, target, axis).mean()
+            );
+        }
+        else{
+            return ENGINE.zeros([1]).sub(ENGINE.log(ENGINE.index_one_hot(inp, target, axis)).mean());
+        }
     }
 }

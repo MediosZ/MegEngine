@@ -14,16 +14,25 @@ async function run() {
     const true_w = ENGINE.tensor([[2], [-3.4]]);
     const true_b = ENGINE.tensor([4.2]);
     let features = ENGINE.rand([num_examples, num_inputs])
-
+    /*
     let labels = features
         .matmul(true_w)
         .add(true_b)
         .add(ENGINE.rand([num_examples, 1],0,0.01));
+    */
+
+    let labels = ENGINE.tidy(() => {
+        return features.matmul(true_w)
+        .add(true_b)
+        .add(ENGINE.rand([num_examples, 1],0,0.01));
+    });
+    
     let linear = Linear(2, 1);
 /*
     let w = ENGINE.rand([num_inputs, 1], 0, 0.005);
     let b = ENGINE.tensor([0]);
 */
+
     let gm = new GradManager();
     // gm.attach([w, b]);
     gm.attach(linear.parameters())
@@ -35,10 +44,12 @@ async function run() {
     for(let i = 0; i < epoch; i++){
       gm.backward(() => {
         // let output = features.matmul(w).add(b);
-        let output = linear.forward(features);
-        let loss = MSE(output, labels);
-        ENGINE.printTensor(loss, "Loss: ");
-        return loss;
+        return ENGINE.tidy(() => {
+            let output = linear.forward(features);
+            let loss = MSE(output, labels);
+            ENGINE.printTensor(loss, "Loss: ");
+            return loss;
+        })
       })
       opt.step();
     }

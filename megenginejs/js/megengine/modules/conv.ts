@@ -39,8 +39,11 @@ class _Conv2D extends Module{
         let outID = ENGINE.engine.conv2d(
             inp.data, this.weight.data, 
             this.stride, this.padding);
-        let offset = ENGINE.getMemOffset(outID);
+        console.log(outID);
+        let offset = ENGINE.getMemOffset(outID, inp.dtype);
+        console.log(offset);
         let out = new Tensor(outID, ENGINE.getTensorShape(outID), offset);
+        ENGINE.track(out);
         ENGINE.tensorMap.set(outID, out)
         if(this.bias){
             out.add_(this.bias);

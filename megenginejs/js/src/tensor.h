@@ -106,7 +106,9 @@ struct Tensor : std::enable_shared_from_this<Tensor>, NonCopyableObj {
 using CallbackFunc = std::function<void(std::shared_ptr<Tensor>)>;
 
 struct TensorWrapper{
-    TensorWrapper(int tensor) : _tensor(tensor){}
+    TensorWrapper(int tensor) : _tensor(tensor){
+        _grad = -1;
+    }
 
     int _tensor;
     int _grad;

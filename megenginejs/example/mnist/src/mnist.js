@@ -2,9 +2,9 @@ export const IMAGE_H = 28;
 export const IMAGE_W = 28;
 const IMAGE_SIZE = IMAGE_H * IMAGE_W;
 const NUM_CLASSES = 10;
-const NUM_DATASET_ELEMENTS = 65000;
+const NUM_DATASET_ELEMENTS = 2000;
 
-const NUM_TRAIN_ELEMENTS = 55000;
+const NUM_TRAIN_ELEMENTS = 1500;
 const NUM_TEST_ELEMENTS = NUM_DATASET_ELEMENTS - NUM_TRAIN_ELEMENTS;
 
 const MNIST_IMAGES_SPRITE_PATH =
@@ -39,13 +39,13 @@ export class MnistData {
         img.height = img.naturalHeight;
 
         const datasetBytesBuffer =
-            new ArrayBuffer(NUM_DATASET_ELEMENTS * IMAGE_SIZE * 4);
+            new ArrayBuffer(65000 * IMAGE_SIZE * 4);
 
         const chunkSize = 5000;
         canvas.width = img.width;
         canvas.height = chunkSize;
 
-        for (let i = 0; i < NUM_DATASET_ELEMENTS / chunkSize; i++) {
+        for (let i = 0; i < 65000 / chunkSize; i++) {
           const datasetBytesView = new Float32Array(
               datasetBytesBuffer, i * IMAGE_SIZE * chunkSize * 4,
               IMAGE_SIZE * chunkSize);
@@ -77,11 +77,11 @@ export class MnistData {
     // Slice the the images and labels into train and test sets.
     this.trainImages =
         this.datasetImages.slice(0, IMAGE_SIZE * NUM_TRAIN_ELEMENTS);
-    this.testImages = this.datasetImages.slice(IMAGE_SIZE * NUM_TRAIN_ELEMENTS);
+    this.testImages = this.datasetImages.slice(IMAGE_SIZE * NUM_TRAIN_ELEMENTS, IMAGE_SIZE * NUM_DATASET_ELEMENTS);
     this.trainLabels =
         this.datasetLabels.slice(0, NUM_CLASSES * NUM_TRAIN_ELEMENTS);
     this.testLabels =
-        this.datasetLabels.slice(NUM_CLASSES * NUM_TRAIN_ELEMENTS);
+        this.datasetLabels.slice(NUM_CLASSES * NUM_TRAIN_ELEMENTS, NUM_CLASSES * NUM_DATASET_ELEMENTS);
   }
 
   getTrainData(){

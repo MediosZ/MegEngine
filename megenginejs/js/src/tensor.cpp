@@ -297,21 +297,22 @@ void testRand(){
 #ifndef __EMSCRIPTEN__
 void testJSBack(){
     auto wrapper = std::make_shared<EngineWrapper>();
-    auto t1 = randTensor({1});
-    auto t2 = randTensor({2, 2});
+    auto t1 = randTensor({50, 1, 28, 28});
+    auto t2 = randTensor({6, 1, 5, 5});
+    auto bias = randTensor({1, 6, 1, 1});
     auto t1id = wrapper->registerTensor(t1);
     auto t2id = wrapper->registerTensor(t2);
+    auto biasid = wrapper->registerTensor(bias);
     mgb_log("register tensor %d, %d", t1id, t2id);
 
     wrapper->startScope();
     wrapper->attach(t1id);
     wrapper->attach(t2id);
 
-    auto outid = wrapper->mul(t1id, t2id);
+    auto outid = wrapper->conv2d(t1id, t2id, 1, 0);
+    wrapper->add_(outid, biasid);
 
-    auto meanid = wrapper->sum(t2id);
-
-    // wrapper->printTensor(t1id);
+    // wrapper->printTensor(outid);
     // wrapper->printTensor(t2id);
 
     // wrapper->printTensor(outid);
@@ -323,6 +324,7 @@ void testJSBack(){
     // wrapper->printGrad(t1id);
     // wrapper->printGrad(t2id);
     // interpreter_for_js->del(t2->m_handle.get());
+    wrapper->disposeTensor(outid);
     // auto tensor = wrapper->getTensor(meanid);
     // interpreter_for_js->del(tensor->m_handle.get());
     interpreter_for_js->sync();
