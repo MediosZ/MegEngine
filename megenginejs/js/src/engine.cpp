@@ -373,9 +373,7 @@ int EngineWrapper::replaceTensor(int id, std::shared_ptr<Tensor> t){
 int32_t EngineWrapper::getTensorOffset(const int id, int dtype){
     auto tensor = getTensor(id);
     if(dtype == 0){
-        mgb_log("about to get offset");
         auto ptr = tensor->value().ptr<float>();
-        mgb_log("get offset");
         #ifdef __EMSCRIPTEN__
         return reinterpret_cast<int32_t>(ptr);
         #else 

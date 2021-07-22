@@ -1,5 +1,5 @@
 import {ENGINE} from "../engine";
-import {Tensor, Parameter} from "../tensor";
+import {Tensor} from "../tensor";
 import {BaseOptimizer} from "./base";
 
 class _SGD extends BaseOptimizer{

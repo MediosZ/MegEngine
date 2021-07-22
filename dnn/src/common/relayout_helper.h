@@ -52,7 +52,8 @@ constexpr size_t BLOCK_LINE_SIZE_BYTES = 64;
 #elif MEGDNN_NAIVE
 constexpr size_t BLOCK_LINE_SIZE_BYTES = 64;
 #else
-#error "unknown megdnn arch"
+constexpr size_t BLOCK_LINE_SIZE_BYTES = 64;
+// #error "unknown megdnn arch"
 #endif
 
 /**

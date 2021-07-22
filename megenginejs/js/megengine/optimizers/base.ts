@@ -1,5 +1,4 @@
-import {ENGINE} from "../engine";
-import {Tensor, Parameter} from "../tensor";
+import {Tensor} from "../tensor";
 
 export class BaseOptimizer{
     learning_rate: number

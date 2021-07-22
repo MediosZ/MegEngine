@@ -1,4 +1,3 @@
-import {ENGINE} from "../engine";
 import {Tensor, Parameter} from "../tensor";
 
 export class Module{
@@ -10,13 +9,13 @@ export class Module{
         let res: Tensor[] = [];
         let retrive = (obj: Module, res: Tensor[]) => {
             let varibales = Object.keys(obj)
-                .map(key => obj[key])
+                .map(key => obj[key as keyof Module])
                 .filter(x => x instanceof Parameter || x instanceof Module);
             for(let v of varibales){
                 if(v instanceof Tensor){
                     res.push(v);
                 }
-                else{
+                else if(v instanceof Module){
                     retrive(v, res);
                 }
             }

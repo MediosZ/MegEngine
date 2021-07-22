@@ -1,10 +1,9 @@
 import {DType, RecursiveArray, TypedArray} from './dtypes';
 import {inferShape, inferSizeFromShape, flatten} from './utils';
-import {init, MegEngine, setWasmPath} from './backend';
+import {init, MegEngine } from './backend';
 import {Tensor} from './tensor';
-import { idText, isThisTypeNode } from 'typescript';
-
 export {setWasmPath} from './backend';
+import {WasmEngine} from "./wasm_engine";
 
 function isTypeArray(x: any): boolean{
     return (x instanceof Float32Array) || (x instanceof Float64Array) || (x instanceof Int32Array) || (x instanceof Uint8Array);
@@ -25,7 +24,7 @@ interface ScopeState {
 class Engine{
   tensorMap: Map<number, Tensor>
   wasm: MegEngine
-  engine: object
+  engine: WasmEngine
   opRegistry: Map<string, Function>
   scopeStack: ScopeState[]
   activeScope: ScopeState
@@ -38,6 +37,7 @@ class Engine{
   }
 
   async init(){
+    console.log("Initializing megengine");
     this.wasm = await init();
     this.wasm.ccall("initTensor", null, null, null);
     this.engine = new this.wasm.Engine();
@@ -99,7 +99,7 @@ class Engine{
   ones(shape: number[], dtype: DType = DType.float32): Tensor{
     let inferedShape = shape;
     const shapeBytes = new Int32Array(inferedShape);
-    let outid = this.engine.ones(shapeBytes);
+    let outid = this.engine.ones(shapeBytes, dtype);
     let offset = this.getMemOffset(outid, dtype);
     let out = new Tensor(outid, shape, offset, dtype);
     this.track(out);
@@ -168,8 +168,7 @@ class Engine{
   }
 
   applyOp(opName: string, ...tensors: Tensor[]){
-      let op = this.opRegistry.get(opName);
-    
+      // let op = this.opRegistry.get(opName);
   }
 
   add(a: Tensor | number, b: Tensor | number): Tensor{
@@ -303,7 +302,7 @@ class Engine{
                 throw Error(`expect shape[${index}] >= -1, got ${value}`);
             }
             if(unspec_axis){
-                throw Error(`multiple -1 in shape: ${unspec_axis} and ${idx}`);
+                throw Error(`multiple -1 in shape: ${unspec_axis} and ${index}`);
             }
             unspec_axis = index;
         }

@@ -1,5 +1,5 @@
 import {ENGINE} from "../engine";
-import {Tensor, Parameter} from "../tensor";
+import {Tensor} from "../tensor";
 import {Module} from "./module";
 
 class _Conv2D extends Module{

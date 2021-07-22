@@ -1,5 +1,4 @@
-import { isEntityName } from "typescript";
-import { DType, TypedArray } from "./dtypes";
+import { DType } from "./dtypes";
 import {ENGINE} from './engine';
 
 export class Parameter{}
