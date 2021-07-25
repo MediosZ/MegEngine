@@ -1,9 +1,11 @@
 {
   "name": "megenginejs",
   "version": "0.1.0",
+  "types": "dist/index.d.ts",
+  "module": "dist/index.js",
   "license": "MIT",
   "scripts": {
-    "build": "yarn rollup -c rollup.config.js",
+    "build": "node ./scripts/patch-worker-module.js && node ./scripts/patch-threaded-simd-module.js && yarn rollup -c rollup.config.js",
     "test": "yarn karma start"
   },
   "browser": {

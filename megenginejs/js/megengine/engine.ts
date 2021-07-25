@@ -37,7 +37,6 @@ class Engine{
   }
 
   async init(){
-    console.log("Initializing megengine");
     this.wasm = await init();
     this.wasm.ccall("initTensor", null, null, null);
     this.engine = new this.wasm.Engine();
@@ -527,7 +526,14 @@ let globalNameSpace : {megGlobals: Map<string, any>};
 export function getGlobalNameSpace() : {megGlobals: Map<string, any>}{
   if (globalNameSpace == null) {
     // tslint:disable-next-line:no-any
-    let ns: any = window;
+    let ns: any;
+    if (typeof (window) !== 'undefined') {
+        ns = window;
+    } else if (typeof (self) !== 'undefined') {
+        ns = self
+    } else {
+        throw new Error('Could not find a global object');
+    }
     globalNameSpace = ns;
   }
   return globalNameSpace;

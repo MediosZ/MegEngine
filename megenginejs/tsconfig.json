@@ -12,7 +12,7 @@
         "declaration": true
     },
     "include": [
-        "js/megengine/main.ts"
+        "js/megengine/index.ts"
     ],
     "exclude": [
         "node_modules",

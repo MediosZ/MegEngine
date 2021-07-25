@@ -18,7 +18,8 @@ export default {
         'fs': 'fs',
         'path': 'path',
         'worker_threads': 'worker_threads',
-        'perf_hooks': 'perf_hooks'
+        'perf_hooks': 'perf_hooks',
+        'os': 'os'
     },
   },
   external: [
@@ -26,6 +27,7 @@ export default {
     'path',
     'worker_threads',
     'perf_hooks',
+    'os'
   ],
   plugins: [typescript(), resolve(), node({preferBuiltins: false}),
     // Polyfill require() from dependencies.
@@ -36,7 +38,7 @@ export default {
     html({
         fileName: "index.html"
     }),
-    terser({output: {preamble: "//wasm-sample", comments: false}, compress: {typeofs: false}}),
+    // terser({output: {preamble: "//wasm-sample", comments: false}, compress: {typeofs: false}}),
     nodePolyfills()
   ],
 };

@@ -8,6 +8,14 @@ module.exports = {
   },
   devServer: {
     contentBase: './dist',
+    headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "require-corp",
+    },
+  },
+  optimization:{
+    minimize: false,
   },
   plugins: [
     new HtmlWebpackPlugin({
