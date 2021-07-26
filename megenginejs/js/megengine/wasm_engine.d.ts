@@ -14,6 +14,8 @@ export class WasmEngine {
     
     backward(arg0: Int): void;
     
+    replaceTensor(arg0: Int, arg1: any, arg2: any, arg3: Int): Int;
+
     registerTensor(arg0: any, arg1: any, arg2: Int): Int;
     
     zeros(arg0: any, arg1: Int): Int;

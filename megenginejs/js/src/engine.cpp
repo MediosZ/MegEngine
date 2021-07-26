@@ -124,17 +124,8 @@ void EngineWrapper::backward(int32_t id){
 
 
 #ifdef __EMSCRIPTEN__
-int EngineWrapper::registerTensorEM(const emscripten::val &v, const emscripten::val &data, const int type = 0){
-    SmallVector<size_t> rv;
-    const auto l = v["length"].as<unsigned>();
-    rv.resize(l);
-    emscripten::val shapeMemoryView{emscripten::typed_memory_view(l, rv.data())};
-    shapeMemoryView.call<void>("set", v);
 
-    TensorShape shape = TensorShape(rv);
-    
-    auto cn = CompNode::load("cpu0");
-    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, getDataType(type));
+void assignData(const emscripten::val &data, std::shared_ptr<HostTensorND> ret, const int type){
     const auto ldata = data["length"].as<unsigned>();
     if(type == 0){
         auto ptr = ret->ptr<float>();
@@ -159,27 +150,50 @@ int EngineWrapper::registerTensorEM(const emscripten::val &v, const emscripten::
     else{
         throw std::runtime_error("Unknown type");
     }
+}
 
-    /*
-    for(size_t i = 0; i < shape.total_nr_elems(); i++){
-        ptr[i] = rdata[i];
-    }
-    */
+
+SmallVector<size_t> getVectorFromVal(const emscripten::val &v){
+    SmallVector<size_t> rv;
+    const auto l = v["length"].as<unsigned>();
+    rv.resize(l);
+    emscripten::val shapeMemoryView{emscripten::typed_memory_view(l, rv.data())};
+    shapeMemoryView.call<void>("set", v);
+    return rv;
+}
+
+int EngineWrapper::replaceTensorEM(int a, const emscripten::val &v, const emscripten::val &data, const int type){
+    auto rv = getVectorFromVal(v);
+    TensorShape shape = TensorShape(rv);
+    
+    auto cn = CompNode::load("cpu0");
+    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, getDataType(type));
+    assignData(data, ret, type);
 
     auto handle = interpreter_for_js->put(*ret, true);
     auto tensor = std::make_shared<Tensor>(handle);
-    auto id = _engine.registerTensor(tensor);
-    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
+    replaceTensor(a, tensor);
+    return a;
+}
+
+int EngineWrapper::registerTensorEM(const emscripten::val &v, const emscripten::val &data, const int type = 0){
+    auto rv = getVectorFromVal(v);
+    TensorShape shape = TensorShape(rv);
+    
+    auto cn = CompNode::load("cpu0");
+    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, getDataType(type));
+    assignData(data, ret, type);
+
+    auto handle = interpreter_for_js->put(*ret, true);
+    auto tensor = std::make_shared<Tensor>(handle);
+    auto id = registerTensor(tensor);
     // mgb_log("register Tensor %d", id);
     return id;
 }
 
 int EngineWrapper::randn(const emscripten::val &v, const float mean, const float std){
-    SmallVector<size_t> rv;
+    auto rv = getVectorFromVal(v);
     const auto l = v["length"].as<unsigned>();
-    rv.resize(l);
-    emscripten::val memoryView{emscripten::typed_memory_view(l, rv.data())};
-    memoryView.call<void>("set", v);
     TensorShape shape = TensorShape{l};
     auto op = GaussianRNG::make(rand(), mean, std);
     auto cn = CompNode::load("cpu0");
@@ -201,11 +215,7 @@ int EngineWrapper::randn(const emscripten::val &v, const float mean, const float
 }
 
 int EngineWrapper::zeros(const emscripten::val &v, int data_type = 0){
-    SmallVector<size_t> rv;
-    const auto l = v["length"].as<unsigned>();
-    rv.resize(l);
-    emscripten::val shapeMemoryView{emscripten::typed_memory_view(l, rv.data())};
-    shapeMemoryView.call<void>("set", v);
+    auto rv = getVectorFromVal(v);
     TensorShape shape = TensorShape(rv);
 
     auto cn = CompNode::load("cpu0");
@@ -241,18 +251,13 @@ int EngineWrapper::zeros(const emscripten::val &v, int data_type = 0){
 
     auto handle = interpreter_for_js->put(*ret, true);
     auto tensor = std::make_shared<Tensor>(handle);
-    auto id = _engine.registerTensor(tensor);
-    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
+    auto id = registerTensor(tensor);
     // mgb_log("register Tensor %d", id);
     return id;
 }
 
 int EngineWrapper::ones(const emscripten::val &v, int data_type = 0){
-    SmallVector<size_t> rv;
-    const auto l = v["length"].as<unsigned>();
-    rv.resize(l);
-    emscripten::val shapeMemoryView{emscripten::typed_memory_view(l, rv.data())};
-    shapeMemoryView.call<void>("set", v);
+    auto rv = getVectorFromVal(v);
     TensorShape shape = TensorShape(rv);
     
     auto cn = CompNode::load("cpu0");
@@ -260,25 +265,25 @@ int EngineWrapper::ones(const emscripten::val &v, int data_type = 0){
     if(data_type == 0){
         auto ptr = ret->ptr<float>();
         for(size_t i = 0; i < shape.total_nr_elems(); i++){
-            ptr[i] = 0.0;
+            ptr[i] = 1.0;
         }
     }
     else if(data_type == 1){
         auto ptr = ret->ptr<int32_t>();
         for(size_t i = 0; i < shape.total_nr_elems(); i++){
-            ptr[i] = 0;
+            ptr[i] = 1;
         } 
     }
     else if(data_type == 2){
         auto ptr = ret->ptr<int8_t>();
         for(size_t i = 0; i < shape.total_nr_elems(); i++){
-            ptr[i] = 0;
+            ptr[i] = 1;
         } 
     }
     else if(data_type == 3){
         auto ptr = ret->ptr<uint8_t>();
         for(size_t i = 0; i < shape.total_nr_elems(); i++){
-            ptr[i] = 0;
+            ptr[i] = 1;
         } 
     }
     else{
@@ -287,8 +292,7 @@ int EngineWrapper::ones(const emscripten::val &v, int data_type = 0){
 
     auto handle = interpreter_for_js->put(*ret, true);
     auto tensor = std::make_shared<Tensor>(handle);
-    auto id = _engine.registerTensor(tensor);
-    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
+    auto id = registerTensor(tensor);
     // mgb_log("register Tensor %d", id);
     return id;
 }
@@ -634,6 +638,7 @@ EMSCRIPTEN_BINDINGS(Engine) {
     .function("attach", &EngineWrapper::attach)
     .function("backward", &EngineWrapper::backward)
     .function("registerTensor", &EngineWrapper::registerTensorEM)
+    .function("replaceTensor", &EngineWrapper::replaceTensorEM)
     .function("zeros", &EngineWrapper::zeros)
     .function("ones", &EngineWrapper::ones)
     .function("disposeTensor", &EngineWrapper::disposeTensor)

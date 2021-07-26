@@ -6,7 +6,7 @@
   "license": "MIT",
   "scripts": {
     "build-mt": "node ./scripts/patch-worker-module.js && node ./scripts/patch-threaded-simd-module.js && yarn rollup -c rollup.config.js",
-    "build": "yarn rollup -c rollup.config.js",
+    "build": "yarn rollup -c rollup.config.js && cp wasm-out/meg* dist/",
     "test": "yarn karma start"
   },
   "browser": {

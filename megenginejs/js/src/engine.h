@@ -60,6 +60,7 @@ public:
     void backward(int32_t id);
 
     #ifdef __EMSCRIPTEN__
+    int replaceTensorEM(int a, const emscripten::val &v, const emscripten::val &data, const int type);
     int registerTensorEM(const emscripten::val &v, const emscripten::val &data, const int type);
     int randn(const emscripten::val &v, const float mean, const float std);
     int ones(const emscripten::val &v, int data_type);

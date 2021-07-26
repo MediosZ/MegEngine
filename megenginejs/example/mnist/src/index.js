@@ -7,6 +7,14 @@ import {
 
 import { MnistData } from "./mnist";
 
+class SubNet extends Module{
+    constructor(){
+        super();
+        this.c1 = Conv2D(1,6,5);
+        this.fc = Linear(120, 20);
+    }
+}
+
 class Lenet extends Module{
     constructor(){
         super();
@@ -17,6 +25,7 @@ class Lenet extends Module{
         this.fc1 = Linear(16 * 4 * 4, 120);
         this.fc2 = Linear(120, 84);
         this.classifier = Linear(84, 10);
+        this.subnet = new SubNet();
     }
     forward(inp){
         return ENGINE.tidy(() => {
@@ -30,7 +39,7 @@ class Lenet extends Module{
     }
 }
 
-async function run() {
+async function mnist() {
     console.log("Running Megenginejs");
     setWasmPath(wasmPath);
     await ENGINE.init();
@@ -76,4 +85,14 @@ async function run() {
     
 }
 
+async function run(){
+    console.log("Running Megenginejs");
+    setWasmPath(wasmPath);
+    await ENGINE.init();
+    let lenet = new Lenet();
+    let dict = lenet.state_dict();
+    console.log(dict);
+    console.log("save lenet");
+    ENGINE.cleanup();
+}
 run();
