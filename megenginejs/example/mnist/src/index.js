@@ -41,7 +41,7 @@ async function run() {
     console.log("load mnist");
     let lenet = new Lenet();
     let gm = new GradManager().attach(lenet.parameters());
-    let opt = SGD(lenet.parameters(), 0.3);
+    let opt = SGD(lenet.parameters(), 0.5);
     console.log("start training");
     for(let i = 0; i < 1; i++){
       console.log(`epoch ${i}`);
@@ -54,7 +54,7 @@ async function run() {
           
           let input = ENGINE.tidy(() => ENGINE.reshape(ENGINE.tensor(value["data"]), [batch_size, 1, 28, 28]));
           let label = ENGINE.tidy(() => ENGINE.argmax(ENGINE.astype(ENGINE.reshape(ENGINE.tensor(value["label"]), [batch_size, 10]), DType.int32), 1));
-
+          let now = Date.now();
           gm.backward(() => {
             return ENGINE.tidy(() => {
                 let out = lenet.forward(input);
@@ -63,9 +63,12 @@ async function run() {
                 return loss;
             });
           })
+          
           opt.step();
           ENGINE.disposeTensor(input);
           ENGINE.disposeTensor(label);
+          let then = Date.now();
+          console.log(`step ${i} ${then - now}`);
       }
     };
     

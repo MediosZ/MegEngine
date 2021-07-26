@@ -75,8 +75,13 @@ public:
     
 
     int index_one_hot(int a, int index, int axis);
-    int32_t getTensorOffset(const int id, int dtype);
-    int32_t getGradOffset(const int id, int dtype);
+    #ifdef __EMSCRIPTEN__
+    using TensorOffset = int32_t;
+    #else 
+    using TensorOffset = uintptr_t;
+    #endif
+    TensorOffset getTensorOffset(const int id, int dtype);
+    TensorOffset getGradOffset(const int id, int dtype);
     std::shared_ptr<Tensor> getTensor(int id){
         return _engine.getTensor(id);
     }

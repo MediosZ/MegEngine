@@ -24,10 +24,9 @@ export class GradManager{
         engine.attach(tensor.data);
       }
       let loss = compute();
-  
+      
       // backward
       engine.backward(loss.data);
-
        for(let tensor of this.attached_tensors){
          ENGINE.updateGrad(tensor);
        }

@@ -76,7 +76,7 @@ void EngineWrapper::disposeTensor(int id){
     // mgb_log("disposeTensor %d", id);
     auto tensor = getTensorWrapper(id);
     _engine.disposeTensor(tensor->_tensor);
-    if(tensor->_grad == -1){
+    if(tensor->_grad != -1){
         _engine.disposeTensor(tensor->_grad);
     }
     _tensor_wrapper_registry->erase(id);
@@ -370,7 +370,7 @@ int EngineWrapper::replaceTensor(int id, std::shared_ptr<Tensor> t){
 }
 
 
-int32_t EngineWrapper::getTensorOffset(const int id, int dtype){
+EngineWrapper::TensorOffset EngineWrapper::getTensorOffset(const int id, int dtype){
     auto tensor = getTensor(id);
     if(dtype == 0){
         auto ptr = tensor->value().ptr<float>();
@@ -410,7 +410,8 @@ int32_t EngineWrapper::getTensorOffset(const int id, int dtype){
 
 }
 
-int32_t EngineWrapper::getGradOffset(const int id, int dtype){
+
+EngineWrapper::TensorOffset EngineWrapper::getGradOffset(const int id, int dtype){
     auto gradID = getGradID(id);
     return getTensorOffset(gradID, dtype);
 }

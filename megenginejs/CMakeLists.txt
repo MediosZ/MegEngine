@@ -38,12 +38,9 @@ set(FLAGS
     -s INITIAL_MEMORY=512mb
     -s TOTAL_STACK=128mb
     -s DISABLE_EXCEPTION_CATCHING=0
-    -msse2
-    -msse
-    -msimd128
-    -s USE_PTHREADS=1 
-    -s PTHREAD_POOL_SIZE=4
-    -s PROXY_TO_PTHREAD=1
+    # -msse2
+    # -msse
+    # -msimd128
 )
 #-s USE_PTHREADS=1 
 #-s PTHREAD_POOL_SIZE=4
