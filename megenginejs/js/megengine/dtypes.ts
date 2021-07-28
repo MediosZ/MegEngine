@@ -4,6 +4,9 @@ export enum DType{
   int8,
   uint8
 }
+export function isTypedArray(x: any): boolean{
+    return (x instanceof Float32Array) || (x instanceof Float64Array) || (x instanceof Int32Array) || (x instanceof Uint8Array);
+}
 
 export declare type TypedArray = Float32Array | Int32Array | Uint8Array | Int8Array;
 

@@ -3,6 +3,13 @@
 type Int = number;
 type Float = number;
 
+export class WasmModelExecutor {
+    constructor(arg0: string);
+    forward(arg0: any, arg1: any, arg2: Int): Int;
+    getInputShape(): string;
+    delete(): void;
+}
+
 export class WasmEngine {
     constructor();
     

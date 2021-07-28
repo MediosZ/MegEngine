@@ -1,19 +1,11 @@
-import {DType, RecursiveArray, TypedArray} from './dtypes';
+import {DType, RecursiveArray, TypedArray, isTypedArray} from './dtypes';
 import {inferShape, inferSizeFromShape, flatten} from './utils';
 import {init, MegEngine } from './backend';
-import {Tensor} from './tensor';
+import {Tensor, TensorInfo} from './tensor';
 export {setWasmPath} from './backend';
-import {WasmEngine} from "./wasm_engine";
-
-function isTypeArray(x: any): boolean{
-    return (x instanceof Float32Array) || (x instanceof Float64Array) || (x instanceof Int32Array) || (x instanceof Uint8Array);
-}
+import {WasmEngine} from "./wasm_dtypes";
 
 
-interface TensorInfo {
-    shape?: number[];
-    dtype: DType;
-}
 
 interface ScopeState {
     track: Tensor[];
@@ -46,7 +38,7 @@ class Engine{
       let {shape, dtype} = info;
       let id;
       let inferedShape;
-      if(isTypeArray(data)){
+      if(isTypedArray(data)){
         inferedShape = shape || [(data as TypedArray).length];
         const shapeBytes = new Int32Array(inferedShape);
         id = this.engine.registerTensor(shapeBytes, data, dtype);

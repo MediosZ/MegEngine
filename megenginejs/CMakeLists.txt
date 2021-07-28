@@ -31,6 +31,7 @@ target_link_libraries(meg PRIVATE range-v3)
 target_compile_options(meg PRIVATE "-Wall")
 set(FLAGS
     -s MODULARIZE=1
+    -s FORCE_FILESYSTEM=1
     --bind
     -s EXPORT_NAME='MegJSModule'
     -s EXPORTED_RUNTIME_METHODS="['cwrap', 'ccall']"

@@ -1,6 +1,13 @@
 import { DType } from "./dtypes";
 import {ENGINE} from './engine';
 
+
+export interface TensorInfo {
+    shape?: number[];
+    dtype: DType;
+}
+
+
 export class Parameter{}
 
 export class Tensor extends Parameter{

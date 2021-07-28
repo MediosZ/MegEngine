@@ -2,6 +2,7 @@ export {DType, RecursiveArray, TypedArray} from './dtypes';
 export {ENGINE, setWasmPath} from './engine';
 export { Tensor } from './tensor';
 export {GradManager} from './grad_manager';
+export {createModelExecutor} from "./model_executor";
 export {
     Module, 
     Conv2D, 

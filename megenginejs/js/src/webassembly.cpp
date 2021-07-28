@@ -29,6 +29,33 @@ void readfs(const char* fname){
 }
 
 
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+void runProgram(){
+    std::unique_ptr<serialization::InputFile> inp_file =
+            serialization::InputFile::make_fs("xornet_deploy.mge");
+    auto loader = serialization::GraphLoader::make(std::move(inp_file));
+    serialization::GraphLoadConfig config;
+    serialization::GraphLoader::LoadResult network =
+            loader->load(config, false);
+    auto data = network.tensor_map["data"];
+    float* data_ptr = data->resize({1, 2}).ptr<float>();
+    data_ptr[0] = 0.6;
+    data_ptr[1] = 0.9;
+    HostTensorND predict;
+    std::unique_ptr<cg::AsyncExecutable> func =
+            network.graph->compile({make_callback_copy(
+                    network.output_var_map.begin()->second, predict)});
+    func->execute();
+    func->wait();
+    float* predict_ptr = predict.ptr<float>();
+    
+    std::cout << " Predicted: " << predict_ptr[0] << " " << predict_ptr[1]
+              << std::endl;
+}
+
+
 extern "C"{
 /*
 #ifdef __EMSCRIPTEN__

@@ -3,6 +3,7 @@
 #include "megbrain/imperative/ops/autogen.h"
 #include <vector>
 #include <unordered_map>
+#include "./utils.h"
 
 using namespace mgb::imperative::interpreter;
 namespace mgb::imperative::js {

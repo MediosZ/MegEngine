@@ -1,7 +1,10 @@
-import {WasmEngine} from "../js/megengine/wasm_engine";
+import { TypedArray } from "../js/megengine";
+import { WasmEngine, WasmModelExecutor } from "../js/megengine/wasm_dtypes";
 
 export interface MegEngine extends EmscriptenModule {
-    Engine: typeof WasmEngine
+    Engine: typeof WasmEngine;
+    WasmModelExecutor: typeof WasmModelExecutor;
+    FS_createDataFile(parent: string, path: string, data: TypedArray, canread: boolean, canwrite: boolean, canown: boolean): any;
 }
 
 export interface WasmFactoryConfig {
