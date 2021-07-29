@@ -136,6 +136,11 @@ void ConvBiasDesc::set_conv(DType data_type, const param::ConvBias& param,
 namespace conv_bias {
 
 bool is_cudnn_supported(const BiasForwardSizeArgs& args) {
+    if ((args.src_layout->dtype.enumv() == DTypeEnum::QuantizedS4 ||
+         args.src_layout->dtype.enumv() == DTypeEnum::Quantized4Asymm) &&
+        args.filter_layout->dtype.enumv() == DTypeEnum::QuantizedS4)
+        return false;
+
     if (args.src_layout->dtype == args.filter_layout->dtype &&
         args.src_layout->dtype == dtype::BFloat16()) {
         return false;
@@ -166,34 +171,6 @@ bool is_cudnn_supported(const BiasForwardSizeArgs& args) {
     supported &= (fm.dilation[0] == 1 && fm.dilation[1] == 1);
 #endif
     return supported;
-}
-
-bool check_bias_share_in_channel(const TensorLayout& bias,
-                                 const param::ConvBias::Format format) {
-    bool share_in_channel = false;
-    if (format == param::ConvBias::Format::NCHW ||
-        format == param::ConvBias::Format::NCHW4_NCHW) {
-        share_in_channel = (bias.ndim == 4 && bias[0] == 1 && bias[2] == 1 &&
-                            bias[3] == 1);
-    } else if (format == param::ConvBias::Format::NHWC) {
-        share_in_channel = (bias.ndim == 4 && bias[0] == 1 && bias[1] == 1 &&
-                            bias[2] == 1);
-    } else if (format == param::ConvBias::Format::NCHW4 ||
-               format == param::ConvBias::Format::NCHW8 ||
-               format == param::ConvBias::Format::NCHW32 ||
-               format == param::ConvBias::Format::NCHW4_NCHW32 ||
-               format == param::ConvBias::Format::NCHW32_NCHW4) {
-        share_in_channel = (bias.ndim == 5 && bias[0] == 1 && bias[2] == 1 &&
-                            bias[3] == 1);
-    } else if (format == param::ConvBias::Format::NHWCD4) {
-        share_in_channel = (bias.ndim == 5 && bias[0] == 1 && bias[1] == 1 &&
-                            bias[3] == 1);
-    } else {
-        megdnn_assert(format == param::ConvBias::Format::CHWN4);
-        share_in_channel = (bias.ndim == 5 && bias[1] == 1 && bias[2] == 1 &&
-                            bias[3] == 1);
-    }
-    return share_in_channel;
 }
 
 SmallVector<size_t> matmul_get_workspace_bundle(

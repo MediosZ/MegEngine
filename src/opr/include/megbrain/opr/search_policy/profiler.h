@@ -16,11 +16,11 @@
 #include "megbrain/utils/timer.h"
 #include "megbrain/system.h"
 #include "megbrain/comp_node.h"
+#include "megbrain/tensor.h"
+#include "megbrain/opr/internal/megdnn_opr_wrapper.h"
 
 #include "megdnn/basic_types.h"
-#include "megdnn/oprs/base.h"
-#include "megdnn/oprs/linalg.h"
-#include "megdnn/oprs/nn.h"
+#include "megdnn/oprs.h"
 
 namespace mgb {
 namespace opr {
@@ -42,41 +42,10 @@ namespace opr {
     cb(DeformableConvBackwardData)   \
     cb(BatchConvBiasForward)         \
     cb(MatrixMul)                    \
-    cb(BatchedMatrixMul)
+    cb(BatchedMatrixMul)             \
+    cb(PoolingForward)               \
+    cb(PoolingBackward)
 // clang-format on
-
-template <typename Opr>
-struct OprArityTrait;
-
-template <typename Opr, int _arity_in, int _arity_out>
-struct OprArityTraitTmpl {
-    static constexpr int arity_in = _arity_in;
-    static constexpr int arity_out = _arity_out;
-    static constexpr int arity = arity_in + arity_out;
-};
-
-#define INST_ARITY(_Opr, _in, _out) \
-    template <>                     \
-    struct OprArityTrait<_Opr> : public OprArityTraitTmpl<_Opr, _in, _out> {};
-
-INST_ARITY(megdnn::ConvolutionBackwardData, 2, 1);
-INST_ARITY(megdnn::ConvolutionBackwardFilter, 2, 1);
-INST_ARITY(megdnn::Convolution3DForward, 2, 1);
-INST_ARITY(megdnn::Convolution3DBackwardData, 2, 1);
-INST_ARITY(megdnn::Convolution3DBackwardFilter, 2, 1);
-INST_ARITY(megdnn::LocalShareForward, 2, 1);
-INST_ARITY(megdnn::LocalShareBackwardData, 2, 1);
-INST_ARITY(megdnn::LocalShareBackwardFilter, 2, 1);
-INST_ARITY(megdnn::Convolution, 2, 1);
-INST_ARITY(megdnn::DeformableConvForward, 4, 1);
-INST_ARITY(megdnn::DeformableConvBackwardFilter, 4, 1);
-INST_ARITY(megdnn::BatchConvBiasForward, 4, 1);
-INST_ARITY(megdnn::ConvBias, 4, 1);
-INST_ARITY(megdnn::DeformableConvBackwardData, 5, 3);
-INST_ARITY(megdnn::MatrixMul, 2, 1);
-INST_ARITY(megdnn::BatchedMatrixMul, 2, 1);
-
-#undef INST_ARITY
 
 template <typename Opr>
 constexpr bool opr_supports_preprocess() {
@@ -89,11 +58,11 @@ constexpr bool opr_contain_bias() {
     return std::is_same<Opr, megdnn::ConvBias>::value;
 }
 
-//! matmul and batchedMatrixMul may not be usable once shape changed
+//! matmul and batchedMatrixMul
 template <typename Opr>
-constexpr bool algo_usable_on_shape_change() {
-    return !(std::is_same<Opr, megdnn::MatrixMul>::value ||
-             std::is_same<Opr, megdnn::BatchedMatrixMul>::value);
+constexpr bool is_matmul() {
+    return std::is_same<Opr, megdnn::MatrixMul>::value ||
+             std::is_same<Opr, megdnn::BatchedMatrixMul>::value;
 }
 
 template <typename Opr, bool has_prep>
@@ -182,6 +151,13 @@ private:
     static const double timeout_setting;
 
     static double init_timeout_setting();
+    static void preprocess(const megdnn::TensorLayoutArray& preprocessed_layout,
+                           const SmallVector<DeviceTensorND>& flt_val,
+                           intl::UniqPtrWithCN<Opr>& megdnn_opr,
+                           megdnn::Workspace& mdn_workspace,
+                           std::array<TensorLayout, arity>& layouts,
+                           std::array<DeviceTensorND, arity_in>& inp_val,
+                           PreprocessFilter<Opr>& prep_flt);
     static TResult prof_impl(const TParam& raw_param);
     static void prof_init_device(const TParam& raw_param);
 };

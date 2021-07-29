@@ -110,6 +110,12 @@ MEGDNN_NORETURN void report_error(const char* msg);
 template <typename T, size_t N>
 struct array_wrapper {
     T data[N];
+    MEGDNN_DEVICE __forceinline__ T& operator[](size_t pos) {
+        return reinterpret_cast<T&>(data[pos]);
+    }
+    MEGDNN_DEVICE __forceinline__ T const& operator[](size_t pos) const {
+        return reinterpret_cast<T const&>(data[pos]);
+    }
 };
 
 /*!
@@ -207,12 +213,29 @@ struct CudaDTypeParamImpl<dt_quint4> : DTypeParamImpl<dt_quint4> {
     CudaDTypeParamImpl(const DTypeParamImpl<dt_quint4>& param)
             : CudaDTypeParamImpl(param.scale, param.zero_point) {}
 
-    __device__ uint8_t quantize(float in) const {
+    __device__ dt_quint4 quantize(float in) const {
         float v = in * inv_scale;
         v = roundf(v);
         v = v + zero_point;
         v = fmin(fmax(0.f, v), 15.f);
-        return static_cast<uint8_t>(v);
+        return static_cast<dt_quint4>(v);
+    }
+};
+
+template <>
+struct CudaDTypeParamImpl<dt_qint4> : DTypeParamImpl<dt_qint4> {
+    float inv_scale;
+    CudaDTypeParamImpl() = default;
+    CudaDTypeParamImpl(float scale)
+            : DTypeParamImpl<dt_qint4>(scale), inv_scale(1.0f / scale) {}
+    CudaDTypeParamImpl(const DTypeParamImpl<dt_qint4>& param)
+            : CudaDTypeParamImpl(param.scale) {}
+
+    __device__ dt_qint4 quantize(float in) const {
+        float v = in * inv_scale;
+        v = roundf(v);
+        v = fmin(fmax(-8.f, v), 7.f);
+        return static_cast<dt_qint4>(v);
     }
 };
 
@@ -351,6 +374,7 @@ MEGDNN_DEVICE __forceinline__ static float4 operator+(float4 lval,
     return make_float4(lval.x + rval.x, lval.y + rval.y, lval.z + rval.z,
                        lval.w + rval.w);
 }
+
 #endif
 }  // namespace cuda
 }  // namespace megdnn

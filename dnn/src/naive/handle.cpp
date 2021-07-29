@@ -21,6 +21,7 @@
 #include "src/naive/batch_conv_bias/opr_impl.h"
 #include "src/naive/batch_normalization/opr_impl.h"
 #include "src/naive/batched_matrix_mul/opr_impl.h"
+#include "src/naive/check_has_inf/opr_impl.h"
 #include "src/naive/checksum/opr_impl.h"
 #include "src/naive/concat/opr_impl.h"
 #include "src/naive/cond_take/opr_impl.h"
@@ -28,6 +29,7 @@
 #include "src/naive/convolution/opr_impl.h"
 #include "src/naive/convolution3d/opr_impl.h"
 #include "src/naive/convpooling/opr_impl.h"
+#include "src/naive/correlation/opr_impl.h"
 #include "src/naive/cumsum/opr_impl.h"
 #include "src/naive/cvt_color/opr_impl.h"
 #include "src/naive/dct/opr_impl.h"
@@ -37,6 +39,7 @@
 #include "src/naive/elemwise/opr_impl.h"
 #include "src/naive/elemwise_multi_type/opr_impl.h"
 #include "src/naive/eye/opr_impl.h"
+#include "src/naive/fake_quant/opr_impl.h"
 #include "src/naive/flip/opr_impl.h"
 #include "src/naive/gaussian_blur/opr_impl.h"
 #include "src/naive/group_local/opr_impl.h"
@@ -47,6 +50,7 @@
 #include "src/naive/local/opr_impl.h"
 #include "src/naive/local_share/opr_impl.h"
 #include "src/naive/lrn/opr_impl.h"
+#include "src/naive/lsq/opr_impl.h"
 #include "src/naive/mask_conv/opr_impl.h"
 #include "src/naive/matrix_inverse/opr_impl.h"
 #include "src/naive/matrix_mul/opr_impl.h"
@@ -69,18 +73,17 @@
 #include "src/naive/separable_conv/opr_impl.h"
 #include "src/naive/separable_filter/opr_impl.h"
 #include "src/naive/sleep/opr_impl.h"
+#include "src/naive/sliding_window_transpose/opr_impl.h"
 #include "src/naive/split/opr_impl.h"
 #include "src/naive/svd/opr_impl.h"
 #include "src/naive/tensor_remap/opr_impl.h"
 #include "src/naive/tile/opr_impl.h"
 #include "src/naive/topk/opr_impl.h"
+#include "src/naive/tqt/opr_impl.h"
 #include "src/naive/transpose/opr_impl.h"
 #include "src/naive/type_cvt/opr_impl.h"
 #include "src/naive/warp_affine/opr_impl.h"
 #include "src/naive/warp_perspective/opr_impl.h"
-#include "src/naive/remap/opr_impl.h"
-#include "src/naive/fake_quant/opr_impl.h"
-#include "src/naive/tqt/opr_impl.h"
 
 static size_t g_image2d_pitch_alignment = 1;
 
@@ -108,6 +111,9 @@ DefaultLocalShareBackwardFilterAlgorithm
 
 DefaultMatrixMulAlgorithm HandleImpl::m_default_matmul_fwd_algo;
 DefaultBatchedMatrixMulAlgorithm HandleImpl::m_default_batched_matmul_fwd_algo;
+
+DefaultPoolingForwardAlgorithm HandleImpl::m_default_pooling_fwd_algo;
+DefaultPoolingBackwardAlgorithm HandleImpl::m_default_pooling_bwd_algo;
 
 HandleImpl::HandleImpl(megcoreComputingHandle_t computing_handle,
                        HandleType type)

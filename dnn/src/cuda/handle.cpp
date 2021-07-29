@@ -11,12 +11,16 @@
 
 #include "src/common/handle_impl.h"
 #include "src/common/version_symbol.h"
+#include "src/common/api_cache.h"
 
 #include "src/cuda/handle.h"
 #include "src/cuda/utils.h"
+#include "src/cuda/api_cache.h"
+#include "megdnn/common.h"
 
 #include <cuda.h>
 #include <cstring>
+#include <memory>
 
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
@@ -56,10 +60,12 @@ HandleImpl::HandleImpl(megcoreComputingHandle_t comp_handle):
         "cuda library version is too low to run cublasLt");
 #endif
 #if CUDNN_VERSION >= 8000
-    megdnn_log_warn(R"(
-        Cudnn8 will jit ptx code with cache. You can set 
-        CUDA_CACHE_MAXSIZE and CUDA_CACHE_PATH environment var to avoid repeat jit(very slow).
-        For example `export CUDA_CACHE_MAXSIZE=2147483647` and `export CUDA_CACHE_PATH=/data/.cuda_cache`)");
+    if (!MGB_GETENV("CUDA_CACHE_PATH")) {
+        megdnn_log_warn(R"(
+            Cudnn8 will jit ptx code with cache. You can set 
+            CUDA_CACHE_MAXSIZE and CUDA_CACHE_PATH environment var to avoid repeat jit(very slow).
+            For example `export CUDA_CACHE_MAXSIZE=2147483647` and `export CUDA_CACHE_PATH=/data/.cuda_cache`)");
+    }
 #endif
     cudnn_check(cudnnCreate(&m_cudnn_handle));
     cublas_check(cublasCreate(&m_cublas_handle));
@@ -88,6 +94,8 @@ HandleImpl::HandleImpl(megcoreComputingHandle_t comp_handle):
     // check tk1
     m_is_tegra_k1 = (strcmp(m_device_prop->name, "GK20A") == 0);
     m_cusolver_handle = nullptr;
+
+    m_cudnn_api_cache = std::make_unique<CUDNN>(m_cudnn_handle);
 }
 
 HandleImpl::~HandleImpl() noexcept {
@@ -133,8 +141,112 @@ HandleImpl::HandleVendorType HandleImpl::vendor_type() const {
     return HandleVendorType::CUDA;
 }
 
-} // namespace cuda
-} // namespace megdnn
+HandleImpl::CUDNN& HandleImpl::cudnn() {
+    return *m_cudnn_api_cache;
+}
+
+HandleImpl::CUDNN::CUDNN(cudnnHandle_t handle) {
+    m_handle = handle;
+    GetConvolutionForwardWorkspaceSize =
+            FunctionCacheBuilder<>()
+                    .input<Param<cudnnHandle_t>>()
+                    .input<CudnnTensorDescParam>()
+                    .input<CudnnFilterDescParam>()
+                    .input<CudnnConvDescParam>()
+                    .input<CudnnTensorDescParam>()
+                    .input<Param<cudnnConvolutionFwdAlgo_t>>()
+                    .output<RefParam<size_t>>()
+                    .ret<Param<cudnnStatus_t>>()
+                    .build(&cudnnGetConvolutionForwardWorkspaceSize);
+#if CUDNN_MAJOR >= 7
+    GetConvolutionForwardAlgorithm_v7 =
+            FunctionCacheBuilder<>()
+                    .input<Param<cudnnHandle_t>>()
+                    .input<CudnnTensorDescParam>()
+                    .input<CudnnFilterDescParam>()
+                    .input<CudnnConvDescParam>()
+                    .input<CudnnTensorDescParam>()
+                    .input<Param<int>>()
+                    .output<RefArraySizeParam<int>>()
+                    .output<ArrayParam<int,
+                                       Param<cudnnConvolutionFwdAlgoPerf_t>>>()
+                    .ret<Param<cudnnStatus_t>>()
+                    .build(&cudnnGetConvolutionForwardAlgorithm_v7);
+    GetConvolutionForwardAlgorithmMaxCount =
+            FunctionCacheBuilder<>()
+                    .input<Param<cudnnHandle_t>>()
+                    .output<RefParam<int>>()
+                    .ret<Param<cudnnStatus_t>>()
+                    .build(&cudnnGetConvolutionForwardAlgorithmMaxCount);
+#endif
+    GetConvolutionBackwardDataWorkspaceSize =
+            FunctionCacheBuilder<>()
+                    .input<Param<cudnnHandle_t>>()
+                    .input<CudnnFilterDescParam>()
+                    .input<CudnnTensorDescParam>()
+                    .input<CudnnConvDescParam>()
+                    .input<CudnnTensorDescParam>()
+                    .input<Param<cudnnConvolutionBwdDataAlgo_t>>()
+                    .output<RefParam<size_t>>()
+                    .ret<Param<cudnnStatus_t>>()
+                    .build(&cudnnGetConvolutionBackwardDataWorkspaceSize);
+#if CUDNN_MAJOR >= 7
+    GetConvolutionBackwardDataAlgorithm_v7 =
+            FunctionCacheBuilder<>()
+                    .input<Param<cudnnHandle_t>>()
+                    .input<CudnnFilterDescParam>()
+                    .input<CudnnTensorDescParam>()
+                    .input<CudnnConvDescParam>()
+                    .input<CudnnTensorDescParam>()
+                    .input<Param<int>>()
+                    .output<RefArraySizeParam<int>>()
+                    .output<ArrayParam<
+                            int, Param<cudnnConvolutionBwdDataAlgoPerf_t>>>()
+                    .ret<Param<cudnnStatus_t>>()
+                    .build(&cudnnGetConvolutionBackwardDataAlgorithm_v7);
+    GetConvolutionBackwardDataAlgorithmMaxCount =
+            FunctionCacheBuilder<>()
+                    .input<Param<cudnnHandle_t>>()
+                    .output<RefParam<int>>()
+                    .ret<Param<cudnnStatus_t>>()
+                    .build(&cudnnGetConvolutionBackwardDataAlgorithmMaxCount);
+#endif
+    GetConvolutionBackwardFilterWorkspaceSize =
+            FunctionCacheBuilder<>()
+                    .input<Param<cudnnHandle_t>>()
+                    .input<CudnnTensorDescParam>()
+                    .input<CudnnTensorDescParam>()
+                    .input<CudnnConvDescParam>()
+                    .input<CudnnFilterDescParam>()
+                    .input<Param<cudnnConvolutionBwdFilterAlgo_t>>()
+                    .output<RefParam<size_t>>()
+                    .ret<Param<cudnnStatus_t>>()
+                    .build(&cudnnGetConvolutionBackwardFilterWorkspaceSize);
+#if CUDNN_MAJOR >= 7
+    GetConvolutionBackwardFilterAlgorithm_v7 =
+            FunctionCacheBuilder<>()
+                    .input<Param<cudnnHandle_t>>()
+                    .input<CudnnTensorDescParam>()
+                    .input<CudnnTensorDescParam>()
+                    .input<CudnnConvDescParam>()
+                    .input<CudnnFilterDescParam>()
+                    .input<Param<int>>()
+                    .output<RefArraySizeParam<int>>()
+                    .output<ArrayParam<
+                            int, Param<cudnnConvolutionBwdFilterAlgoPerf_t>>>()
+                    .ret<Param<cudnnStatus_t>>()
+                    .build(&cudnnGetConvolutionBackwardFilterAlgorithm_v7);
+    GetConvolutionBackwardFilterAlgorithmMaxCount =
+            FunctionCacheBuilder<>()
+                    .input<Param<cudnnHandle_t>>()
+                    .output<RefParam<int>>()
+                    .ret<Param<cudnnStatus_t>>()
+                    .build(&cudnnGetConvolutionBackwardFilterAlgorithmMaxCount);
+#endif
+}
+
+}  // namespace cuda
+}  // namespace megdnn
 
 MEGDNN_VERSION_SYMBOL(CUDA, CUDA_VERSION);
 MEGDNN_VERSION_SYMBOL3(CUDNN, CUDNN_MAJOR, CUDNN_MINOR, CUDNN_PATCHLEVEL);

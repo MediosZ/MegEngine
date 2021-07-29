@@ -156,6 +156,9 @@ def run_model(args, graph, inputs, outputs, data):
 
     func = graph.compile(outputs)
 
+    if args.get_static_mem_info:
+        func.get_static_memory_alloc_info(args.get_static_mem_info)
+
     def run():
         if not args.embed_input:
             for key in inp_dict:
@@ -389,6 +392,11 @@ def main():
         help="embed input data as SharedDeviceTensor in model, "
         "to remove memory copy for inputs",
     )
+    parser.add_argument(
+        "--get-static-mem-info",
+        type=str,
+        help="Record the static graph's static memory info.",
+    )
     args = parser.parse_args()
 
     if args.verbose:
@@ -403,7 +411,8 @@ def main():
         args.embed_input = True
 
     logger.info("loading model ...")
-    graph, _, output_vars = G.load_graph(args.net)
+    ret = G.load_graph(args.net)
+    graph, output_vars = ret.graph, ret.output_vars_list
     input_vars = tools.get_dep_vars(output_vars, "Host2DeviceCopy")
 
     if args.output_name is not None:

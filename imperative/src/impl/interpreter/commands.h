@@ -13,10 +13,13 @@
 
 #include <string>
 #include <variant>
+#include <unordered_set>
 
 #include "megbrain/tensor.h"
 #include "megbrain/imperative/op_def.h"
 #include "megbrain/imperative/utils/to_string.h"
+
+#include "./tensor_info.h"
 
 namespace mgb::imperative {
 
@@ -43,6 +46,7 @@ struct Put {
 };
 
 struct ApplyOp {
+    uint64_t id; //used by profiler to identify unique apply
     std::shared_ptr<OpDef> op;
     SmallVector<TensorInfo*> inputs;
     SmallVector<TensorInfo*> outputs;
@@ -128,7 +132,7 @@ struct Drop {
 
 struct SetOption {
     std::string key;
-    int value;
+    size_t value;
 
     template <typename TFunctor>
     void get_props(TFunctor&& functor) const {
@@ -142,7 +146,7 @@ struct SetOption {
 };
 
 struct StartProfile {
-    InterpreterProfiler* profiler;
+    std::unordered_set<TensorInfo*> capture_tensors;
 
     template <typename TFunctor>
     void get_props(TFunctor&& functor) const {}
@@ -153,14 +157,10 @@ struct StartProfile {
 };
 
 struct StopProfile {
-    std::string basename;
-    std::string format;
+    std::unordered_set<TensorInfo*> escape_tensors;
 
     template <typename TFunctor>
-    void get_props(TFunctor&& functor) const {
-        functor("basename", basename);
-        functor("format", format);
-    }
+    void get_props(TFunctor&& functor) const {}
 
     const char* get_name() const {
         return "StopProfile";

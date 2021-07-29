@@ -19,56 +19,11 @@ using namespace megdnn;
 using namespace test;
 
 namespace {
-    bool good_float(float val) {
-        return std::isfinite(val);
-    }
-
-    bool good_float(int) {
-        return true;
-    }
-
-    bool good_float(dt_qint8) {
-        return true;
-    }
-
-    bool good_float(dt_qint16) {
-        return true;
-    }
-
-    bool good_float(dt_quint8) {
-        return true;
-    }
-
-    bool good_float(dt_qint32) {
-        return true;
-    }
-
-    // A hack for the (x+0) promote to int trick on dt_quint8.
-    int operator +(dt_quint8 lhs, int rhs) {
-        megdnn_assert(rhs == 0, "unexpected rhs");
-        return lhs.as_uint8();
-    }
-
-    int operator +(dt_qint32 lhs, int rhs) {
-        megdnn_assert(rhs == 0, "unexpected rhs");
-        return lhs.as_int32();
-    }
-
-    int operator +(dt_qint8 lhs, int rhs) {
-        megdnn_assert(rhs == 0, "unexpected rhs");
-        return int8_t(lhs);
-    }
-
-    int operator +(dt_qint16 lhs, int rhs) {
-        megdnn_assert(rhs == 0, "unexpected rhs");
-        return lhs.as_int16();
-    }
-
     template<typename ctype, class Iter>
     ::testing::AssertionResult assert_tensor_eq_with_iter(
             const char *expr0, const char *expr1,
             Iter it0, Iter it1, const TensorLayout &layout,
-            float maxerr, float maxerr_avg, float maxerr_avg_biased) {
+            float maxerr, float maxerr_avg, float maxerr_avg_biased, bool allow_invalid) {
 
         auto nr_elem = layout.total_nr_elems();
         double error_sum = 0;
@@ -78,8 +33,8 @@ namespace {
             float err = diff(iv0, iv1);
             error_sum += std::abs(err);
             error_sum_biased += err;
-            if (!good_float(iv0) || !good_float(iv1) ||
-                std::abs(err) > maxerr) {
+            if (!allow_invalid && (!good_float(iv0) || !good_float(iv1) ||
+                        std::abs(err) > maxerr)) {
                 Index index(layout, i);
                 return ::testing::AssertionFailure()
                        << "Unequal value\n"
@@ -127,13 +82,15 @@ namespace {
     ::testing::AssertionResult assert_tensor_eq_with_dtype(
             const char *expr0, const char *expr1,
             const TensorND &v0, const TensorND &v1,
-            float maxerr, float maxerr_avg, float maxerr_avg_biased) {
-
-        if (v0.layout.is_physical_contiguous() &&
-            v1.layout.is_physical_contiguous()) {
-            return assert_tensor_eq_with_iter<ctype>(
-                    expr0, expr1, v0.ptr<ctype>(), v1.ptr<ctype>(), v0.layout,
-                    maxerr, maxerr_avg, maxerr_avg_biased);
+            float maxerr, float maxerr_avg, float maxerr_avg_biased, bool allow_invalid) {
+        if (!std::is_same<ctype, dt_qint4>::value &&
+            !std::is_same<ctype, dt_quint4>::value) {
+            if (v0.layout.is_physical_contiguous() &&
+                v1.layout.is_physical_contiguous()) {
+                return assert_tensor_eq_with_iter<ctype>(
+                        expr0, expr1, v0.ptr<ctype>(), v1.ptr<ctype>(),
+                        v0.layout, maxerr, maxerr_avg, maxerr_avg_biased, allow_invalid);
+            }
         }
 
         auto it0 = megdnn::tensor_iter_valonly<ctype>(v0).begin(),
@@ -141,57 +98,7 @@ namespace {
 
         return assert_tensor_eq_with_iter<ctype>(expr0, expr1, it0, it1,
                                                  v0.layout, maxerr, maxerr_avg,
-                                                 maxerr_avg_biased);
-    }
-
-    template <typename ITYPE>
-    ::testing::AssertionResult assert_tensor_eq_with_lowbit4(
-            const char* expr0, const char* expr1,
-            const TensorND& v0, const TensorND& v1,
-            float maxerr, float maxerr_avg) {
-        if (!v0.layout.eq_layout(v1.layout)) {
-            return ::testing::AssertionFailure()
-                << "Layout mismatch for testing equality of lowbit4\n"
-                << "Value of: " << expr1 << "\n"
-                << "  Actual: " << v1.layout.TensorShape::to_string() << "\n"
-                << "Expected: " << expr0 << "\n"
-                << "Which is: " << v0.layout.TensorShape::to_string() << "\n";
-        }
-        auto v0_ptr = static_cast<ITYPE*>(v0.raw_ptr) - v0.layout.span().low_byte;
-        auto v1_ptr = static_cast<ITYPE*>(v1.raw_ptr) - v1.layout.span().low_byte;
-        double error_sum = 0;
-        for (size_t i = 0; i < v0.layout.span().dist_elem(); ++i) {
-            ITYPE iv0 = (v0_ptr[i / 2] << (i ^ 1) * 4);
-            iv0 = iv0 >> 4;
-            ITYPE iv1 = (v1_ptr[i / 2] << (i ^ 1) * 4);
-            iv1 = iv1 >> 4;
-
-            float err = std::abs(diff(iv0, iv1));
-            error_sum += err;
-            if (!good_float(iv0) || !good_float(iv1) || err >= maxerr) {
-                Index index(v0.layout, i);
-                return ::testing::AssertionFailure()
-                    << "Unequal value\n"
-                    << "Value of: " << expr1 << "\n"
-                    << "  Actual: " << (iv1+0) << "\n"
-                    << "Expected: " << expr0 << "\n"
-                    << "Which is: " << (iv0+0) << "\n"
-                    << "At index: " <<
-                    index.to_string() << "/" << v0.layout.TensorShape::to_string() << "\n"
-                    << "   Dtype: " << v0.layout.dtype.name() << "\n"
-                    << "   error: " << err << "/" << maxerr;
-            }
-        }
-        float error_avg = error_sum / v0.layout.total_nr_elems();
-        if (error_avg > maxerr_avg) {
-            return ::testing::AssertionFailure()
-                << "Average error too high\n"
-                << "Value of: " << expr1 << "\n"
-                << "Expected: " << expr0 << "\n"
-                << "Average error: " << error_avg << "/" << maxerr_avg;
-        }
-
-        return ::testing::AssertionSuccess();
+                                                 maxerr_avg_biased, allow_invalid);
     }
 
     template<class Impl>
@@ -229,7 +136,7 @@ namespace {
         const char* /*expr_maxerr_avg*/,
         const char* /*expr_maxerr_avg*/,
         const TensorND &v0, const TensorND &v1,
-        float maxerr, float maxerr_avg, float maxerr_avg_biased) {
+        float maxerr, float maxerr_avg, float maxerr_avg_biased, bool allow_invalid) {
 
     if (!v0.layout.eq_shape(v1.layout)) {
         return ::testing::AssertionFailure()
@@ -253,24 +160,30 @@ namespace {
 #define cb(_dt)                                                     \
     case DTypeTrait<_dt>::enumv:                                    \
         return assert_tensor_eq_with_dtype<DTypeTrait<_dt>::ctype>( \
-                expr0, expr1, v0, v1, maxerr, maxerr_avg, maxerr_avg_biased);
+                expr0, expr1, v0, v1, maxerr, maxerr_avg, maxerr_avg_biased, allow_invalid);
         MEGDNN_FOREACH_COMPUTING_DTYPE(cb)
         MEGDNN_FOREACH_QUANTIZED_DTYPE(cb)
         //! In order to avoid an unnecessary increase in binary size, we just
         //! use QuantizedS16 dtype in winograd_filter_preprocess now.
         cb(::megdnn::dtype::QuantizedS16)
-        case DTypeTrait<dtype::Quantized4Asymm>::enumv:
-            return assert_tensor_eq_with_lowbit4<uint8_t>(expr0, expr1, v0, v1,
-                                                          maxerr, maxerr_avg);
-        case DTypeTrait<dtype::QuantizedS4>::enumv:
-            return assert_tensor_eq_with_lowbit4<int8_t>(expr0, expr1, v0, v1,
-                                                         maxerr, maxerr_avg);
+        MEGDNN_FOREACH_QUANTIZED_LOWBIT_DTYPE(cb)
 #undef cb
         default:
             megdnn_trap();
     }
 
 }
+
+::testing::AssertionResult test::__assert_tensor_eq_allow_invalid(
+        const char* expr0, const char* expr1, const char* expr_maxerr,
+        const char* expr_maxerr_avg, const char* expr_maxerr_avg_biased,
+        const TensorND& v0, const TensorND& v1, float maxerr, float maxerr_avg,
+        float maxerr_avg_biased) {
+    return __assert_tensor_eq(expr0, expr1, expr_maxerr, expr_maxerr_avg,
+                              expr_maxerr_avg_biased, v0, v1, maxerr,
+                              maxerr_avg, maxerr_avg_biased, true);
+};
+
 
 CheckerHelper::CheckerHelper(Handle *handle, bool check_dispatch):
     m_handle_cur(handle),
@@ -280,10 +193,10 @@ CheckerHelper::CheckerHelper(Handle *handle, bool check_dispatch):
     const char* env_p = std::getenv("MGB_NO_NAIVE_CHECK");
     if (env_p) {
         int no_naive_flag = atoi(env_p);
-        no_naive_and_check = no_naive_flag > 0 ? true : false;
+        m_no_naive_and_check = no_naive_flag > 0 ? true : false;
         check_dispatch = false;
     } else {
-        no_naive_and_check = false;
+        m_no_naive_and_check = false;
     }
     auto tmp_handle = create_cpu_handle(2, check_dispatch);
     m_handle_naive = std::move(tmp_handle);
@@ -380,7 +293,18 @@ void CheckerHelper::do_exec(const TensorLayoutArray &user_layouts,
         m_expect_exec_fail = {};
         return;
     }
-    if (no_naive_and_check){
+    if (m_stable_check) {
+        auto tensors_bak_host_storage =
+                alloc_tensors(m_handle_naive.get(), layouts, m_offset);
+        auto&& tensors_bak_host = *tensors_bak_host_storage;
+        copy_tensors_from_device(tensors_bak_host, tensors_cur);
+        for (int i = 0; i < 10; i++) {
+            exec_opr(tensors_cur);
+            copy_tensors_from_device(tensors_cur_host, tensors_cur);
+            check_tensors(tensors_bak_host, tensors_cur_host);
+        }
+    }
+    if (m_no_naive_and_check) {
         m_prev_succ = !::testing::Test::HasFailure();
         return;
     }
@@ -498,9 +422,15 @@ void CheckerHelper::check_tensors(const TensorValueArray& expected,
     for (size_t i = 0; i < expected.size(); ++i) {
         if (expected[i].layout.ndim == 0)
             continue;
-        MEGDNN_ASSERT_TENSOR_EQ_EPS_AVG(expected[i], computed[i], m_epsilon,
-                                        m_max_avg_error,
-                                        m_max_avg_biased_error);
+        if (m_allow_invalid_check) {
+            MEGDNN_ASSERT_TENSOR_EQ_EPS_AVG_ALLOW_INVALID(
+                    expected[i], computed[i], m_epsilon, m_max_avg_error,
+                    m_max_avg_biased_error);
+        } else {
+            MEGDNN_ASSERT_TENSOR_EQ_EPS_AVG(expected[i], computed[i], m_epsilon,
+                                            m_max_avg_error,
+                                            m_max_avg_biased_error);
+        }
     }
 }
 

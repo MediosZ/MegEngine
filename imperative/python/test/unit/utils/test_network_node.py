@@ -13,8 +13,11 @@ import megengine.random as rand
 from megengine.core._imperative_rt.core2 import apply
 from megengine.core._wrap import Device
 from megengine.core.ops import builtin
-from megengine.device import is_cuda_available
-from megengine.distributed.helper import get_device_count_by_fork
+from megengine.device import get_device_count, is_cuda_available
+from megengine.functional.debug_param import (
+    get_execution_strategy,
+    set_execution_strategy,
+)
 from megengine.functional.external import tensorrt_runtime_opr
 from megengine.jit.tracing import trace
 from megengine.tensor import Tensor
@@ -102,15 +105,26 @@ def test_matinv():
     check_pygraph_dump(fwd, [data], [result])
 
 
-def test_matmul():
+@pytest.mark.parametrize(
+    "execution_strategy", ["HEURISTIC_REPRODUCIBLE", "PROFILE_REPRODUCIBLE"]
+)
+def test_matmul(execution_strategy):
     @trace(symbolic=True, capture_as_const=True)
     def fwd(data1, data2):
         return F.matmul(data1, data2)
 
+    old = get_execution_strategy()
+    set_execution_strategy(execution_strategy)
+
+    max_err = None
+    if execution_strategy == "PROFILE_REPRODUCIBLE":
+        max_err = 1e-5
+
     data1 = Tensor(np.random.random((32, 64)))
     data2 = Tensor(np.random.random((64, 16)))
     result = fwd(data1, data2)
-    check_pygraph_dump(fwd, [data1, data2], [result])
+    check_pygraph_dump(fwd, [data1, data2], [result], max_err=max_err)
+    set_execution_strategy(old)
 
 
 def test_batchmatmul():
@@ -273,7 +287,7 @@ def test_deformable_ps_roi_pooling():
 
 
 @pytest.mark.skipif(
-    get_device_count_by_fork("gpu") > 0,
+    get_device_count("gpu") > 0,
     reason="does not support int8 when gpu compute capability less than 6.1",
 )
 def test_convbias():

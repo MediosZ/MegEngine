@@ -15,6 +15,7 @@
 #include "megdnn/dtype.h"
 #include "src/common/utils.h"
 #include "src/naive/handle.h"
+#include "src/naive/lowbit_utils.h"
 
 #include "midout.h"
 MIDOUT_DECL(megdnn_naive_pooling)
@@ -188,6 +189,12 @@ struct NCHW32IdxGetter {
     static size_t get_idx(size_t n, size_t c, size_t h, size_t w, size_t,
                           size_t C, size_t H, size_t W) {
         return (((n * (C >> 5) + (c >> 5)) * H + h) * W + w) * 32 + (c & 0x1f);
+    }
+};
+struct NCHW64IdxGetter {
+    static size_t get_idx(size_t n, size_t c, size_t h, size_t w, size_t,
+                          size_t C, size_t H, size_t W) {
+        return (((n * (C >> 6) + (c >> 6)) * H + h) * W + w) * 64 + (c & 0x3f);
     }
 };
 /*!
@@ -375,15 +382,80 @@ void pooling_backward_max_impl(const ctype* __restrict src,
 namespace megdnn {
 namespace naive {
 
+WorkspaceBundle PoolingForwardImpl::get_workspace_bundle(
+        void* ptr, const TensorLayout& src, const TensorLayout& dst) const {
+    SmallVector<size_t> sizes;
+    TensorLayout fsrc = src;
+    TensorLayout fdst = dst;
+    auto get_workspace = [&sizes](TensorLayout& layout) {
+        if (layout.dtype.enumv() == DTypeEnum::Quantized4Asymm ||
+            layout.dtype.enumv() == DTypeEnum::QuantizedS4) {
+            layout.dtype = dtype::Int8();
+            layout.format = TensorLayout::Format(layout.dtype);
+            sizes.push_back(layout.span().dist_byte());
+        }
+    };
+    get_workspace(fsrc);
+    get_workspace(fdst);
+    return {ptr, std::move(sizes)};
+};
+
+size_t PoolingForwardImpl::get_workspace_in_bytes(const TensorLayout& src,
+                                                  const TensorLayout& dst) {
+    return get_workspace_bundle(nullptr, src, dst).total_size_in_bytes();
+}
+namespace {
+
+void post_process(const TensorND& dst, TensorND& comp_dst) {
+    if (dst.layout.dtype.enumv() == DTypeEnum::QuantizedS4) {
+        int8_to_int4(comp_dst, dst);
+    } else if (dst.layout.dtype.enumv() == DTypeEnum::Quantized4Asymm) {
+        uint8_to_uint4(comp_dst, dst);
+    }
+}
+
+}  // namespace
+
 void PoolingForwardImpl::exec(_megdnn_tensor_in src, _megdnn_tensor_out dst,
                               _megdnn_workspace workspace) {
     check_exec(src.layout, dst.layout, workspace.size);
+    TensorND comp_src = src;
+    TensorND comp_dst = dst;
+
+    auto wsb = get_workspace_bundle(workspace.raw_ptr, src.layout, dst.layout);
+    if (src.layout.dtype.enumv() == DTypeEnum::QuantizedS4) {
+        float scale = src.layout.dtype.param<dtype::QuantizedS4>().scale;
+        comp_src.layout.dtype = dtype::QuantizedS8(scale);
+        comp_src.layout.format = TensorLayout::Format(comp_src.layout.dtype);
+        comp_src.layout.init_contiguous_stride();
+        comp_src.raw_ptr = wsb.get(0);
+        comp_dst.layout.dtype = dtype::QuantizedS8(scale);
+        comp_dst.layout.format = TensorLayout::Format(comp_dst.layout.dtype);
+        comp_dst.layout.init_contiguous_stride();
+        comp_dst.raw_ptr = wsb.get(1);
+        int4_to_int8(src, comp_src);
+    } else if (src.layout.dtype.enumv() == DTypeEnum::Quantized4Asymm) {
+        float scale = src.layout.dtype.param<dtype::Quantized4Asymm>().scale;
+        uint8_t zero_point =
+                src.layout.dtype.param<dtype::Quantized4Asymm>().zero_point;
+        comp_src.layout.dtype = dtype::Quantized8Asymm(scale, zero_point);
+        comp_src.layout.format = TensorLayout::Format(comp_src.layout.dtype);
+        comp_src.layout.init_contiguous_stride();
+        comp_src.raw_ptr = wsb.get(0);
+        comp_dst.layout.dtype = dtype::Quantized8Asymm(scale, zero_point);
+        comp_dst.layout.format = TensorLayout::Format(comp_dst.layout.dtype);
+        comp_dst.layout.init_contiguous_stride();
+        comp_dst.raw_ptr = wsb.get(1);
+        uint4_to_uint8(src, comp_src);
+    }
+
     size_t c_pos, spatial_pos, batch_pos = 0;
     if (param().format == Param::Format::NCHW ||
         param().format == Param::Format::NCHW4 ||
         param().format == Param::Format::NCHW88 ||
         param().format == Param::Format::NCHW44 ||
-        param().format == Param::Format::NCHW32) {
+        param().format == Param::Format::NCHW32 ||
+        param().format == Param::Format::NCHW64) {
         c_pos = 1;
         spatial_pos = 2;
     } else if (param().format == Param::Format::NHWC) {
@@ -398,27 +470,35 @@ void PoolingForwardImpl::exec(_megdnn_tensor_in src, _megdnn_tensor_out dst,
         c_pos = 2;
         spatial_pos = 1;
     }
-    size_t N = src.layout.shape[batch_pos], C = src.layout.shape[c_pos],
-           IH = src.layout.shape[spatial_pos + 0],
-           IW = src.layout.shape[spatial_pos + 1];
-    size_t OH = dst.layout.shape[spatial_pos + 0],
-           OW = dst.layout.shape[spatial_pos + 1];
-    if (param().format == Param::Format::NHWCD4) {
-        C *= 4;
-        IW = src.layout.shape[spatial_pos + 2];
-        OW = dst.layout.shape[spatial_pos + 2];
+    size_t N = comp_src.layout.shape[batch_pos],
+           C = comp_src.layout.shape[c_pos],
+           IH = comp_src.layout.shape[spatial_pos + 0],
+           IW = comp_src.layout.shape[spatial_pos + 1];
+    size_t OH = comp_dst.layout.shape[spatial_pos + 0],
+           OW = comp_dst.layout.shape[spatial_pos + 1];
+    switch (param().format) {
+        case Param::Format::NHWCD4:
+            C *= 4;
+            IW = comp_src.layout.shape[spatial_pos + 2];
+            OW = comp_dst.layout.shape[spatial_pos + 2];
+            break;
+        case Param::Format::NCHW4:
+        case Param::Format::NCHW44:
+        case Param::Format::CHWN4:
+            C *= 4;
+            break;
+        case Param::Format::NCHW88:
+            C *= 8;
+            break;
+        case Param::Format::NCHW32:
+            C *= 32;
+            break;
+        case Param::Format::NCHW64:
+            C *= 64;
+            break;
+        default:;
     }
-    if (param().format == Param::Format::NCHW4 ||
-        param().format == Param::Format::NCHW44 ||
-        param().format == Param::Format::CHWN4) {
-        C *= 4;
-    }
-    if (param().format == Param::Format::NCHW88) {
-        C *= 8;
-    }
-    if (param().format == Param::Format::NCHW32) {
-        C *= 32;
-    }
+
     size_t PH = param().pad_h, PW = param().pad_w;
     size_t FH = param().window_h, FW = param().window_w;
     size_t SH = param().stride_h, SW = param().stride_w;
@@ -427,8 +507,8 @@ void PoolingForwardImpl::exec(_megdnn_tensor_in src, _megdnn_tensor_out dst,
         MEGDNN_DISPATCH_CPU_KERN(                                              \
                 static_cast<naive::HandleImpl*>(handle()),                     \
                 pooling_forward_impl<Pooler MEGDNN_COMMA IdxGetter>(           \
-                        sptr, dptr, src.layout.dtype, N, C, IH, IW, OH, OW,    \
-                        PH, PW, SH, SW, FH, FW));                              \
+                        sptr, dptr, comp_src.layout.dtype, N, C, IH, IW, OH,   \
+                        OW, PH, PW, SH, SW, FH, FW));                          \
     }                                                                          \
     MIDOUT_END();
 
@@ -455,6 +535,9 @@ void PoolingForwardImpl::exec(_megdnn_tensor_in src, _megdnn_tensor_out dst,
         case Param::Format::NCHW32:                                       \
             DISPATCH_WITH_POOLER_AND_IDX_GETTER(Pooler, NCHW32IdxGetter); \
             break;                                                        \
+        case Param::Format::NCHW64:                                       \
+            DISPATCH_WITH_POOLER_AND_IDX_GETTER(Pooler, NCHW64IdxGetter); \
+            break;                                                        \
         case Param::Format::CHWN4:                                        \
             DISPATCH_WITH_POOLER_AND_IDX_GETTER(Pooler, CHWN4IdxGetter);  \
             break;                                                        \
@@ -462,36 +545,87 @@ void PoolingForwardImpl::exec(_megdnn_tensor_in src, _megdnn_tensor_out dst,
             megdnn_throw("invalid pooling format");                       \
     }
 
-#define cb(DType)                                               \
-    if (src.layout.dtype.enumv() == DTypeTrait<DType>::enumv) { \
-        using ctype = typename DTypeTrait<DType>::ctype;        \
-        switch (param().mode) {                                 \
-            case Mode::MAX: {                                   \
-                auto sptr = src.ptr<ctype>();                   \
-                auto dptr = dst.ptr<ctype>();                   \
-                DISPATCH_WITH_POOLER(MaxPooler<ctype>);         \
-                return;                                         \
-            }                                                   \
-            case Mode::AVERAGE: {                               \
-                auto sptr = src.ptr<ctype>();                   \
-                auto dptr = dst.ptr<ctype>();                   \
-                DISPATCH_WITH_POOLER(MeanIncludePooler<ctype>); \
-                return;                                         \
-            }                                                   \
-            case Mode::AVERAGE_COUNT_EXCLUDE_PADDING: {         \
-                auto sptr = src.ptr<ctype>();                   \
-                auto dptr = dst.ptr<ctype>();                   \
-                DISPATCH_WITH_POOLER(MeanExcludePooler<ctype>); \
-                return;                                         \
-            }                                                   \
-        }                                                       \
+#define cb(DType)                                                    \
+    if (comp_src.layout.dtype.enumv() == DTypeTrait<DType>::enumv) { \
+        using ctype = typename DTypeTrait<DType>::ctype;             \
+        switch (param().mode) {                                      \
+            case Mode::MAX: {                                        \
+                auto sptr = comp_src.ptr<ctype>();                   \
+                auto dptr = comp_dst.ptr<ctype>();                   \
+                DISPATCH_WITH_POOLER(MaxPooler<ctype>);              \
+                break;                                               \
+            }                                                        \
+            case Mode::AVERAGE: {                                    \
+                auto sptr = comp_src.ptr<ctype>();                   \
+                auto dptr = comp_dst.ptr<ctype>();                   \
+                DISPATCH_WITH_POOLER(MeanIncludePooler<ctype>);      \
+                break;                                               \
+            }                                                        \
+            case Mode::AVERAGE_COUNT_EXCLUDE_PADDING: {              \
+                auto sptr = comp_src.ptr<ctype>();                   \
+                auto dptr = comp_dst.ptr<ctype>();                   \
+                DISPATCH_WITH_POOLER(MeanExcludePooler<ctype>);      \
+                break;                                               \
+            }                                                        \
+            default:                                                 \
+                megdnn_assert(0, "not support mode");                \
+        }                                                            \
+        post_process(dst, comp_dst);                                 \
+        return;                                                      \
     }
+
     MEGDNN_FOREACH_COMPUTING_DTYPE(cb)
     MEGDNN_FOREACH_QUANTIZED_DTYPE(cb)
 #undef cb
 #undef DISPATCH_WITH_POOLER_AND_IDX_GETTER
 #undef DISPATCH_WITH_POOLER
     megdnn_assert_internal(0);
+}
+
+PoolingForward::Algorithm* PoolingForwardImpl::get_algorithm_from_desc(
+        const AlgorithmDesc& desc) {
+    Algorithm* ret =
+            static_cast<HandleImpl*>(handle())->default_pooling_fwd_algo();
+    megdnn_assert(desc == ret->info().desc);
+    return ret;
+}
+
+std::vector<Algorithm*> PoolingForwardImpl::get_all_algorithms(
+        const TensorLayout&, const TensorLayout&) {
+    return {static_cast<HandleImpl*>(handle())->default_pooling_fwd_algo()};
+}
+
+Algorithm* PoolingForwardImpl::get_algorithm_heuristic(
+        const TensorLayout& /*src*/, const TensorLayout& /*dst*/,
+        size_t /*workspace_limit_in_bytes*/, const AlgoAttribute& positive_attr,
+        const AlgoAttribute& negative_attr) {
+    auto algo = static_cast<HandleImpl*>(handle())->default_pooling_fwd_algo();
+    algo->check_attribute(positive_attr, negative_attr);
+    return algo;
+}
+
+Algorithm* PoolingBackwardImpl::get_algorithm_from_desc(
+        const AlgorithmDesc& desc) {
+    Algorithm* ret =
+            static_cast<HandleImpl*>(handle())->default_pooling_bwd_algo();
+    megdnn_assert(desc == ret->info().desc);
+    return ret;
+}
+
+std::vector<Algorithm*> PoolingBackwardImpl::get_all_algorithms(
+        const TensorLayout& /*src*/, const TensorLayout& /*dst*/,
+        const TensorLayout& /*diff*/, const TensorLayout& /*grad*/) {
+    return {static_cast<HandleImpl*>(handle())->default_pooling_bwd_algo()};
+}
+
+Algorithm* PoolingBackwardImpl::get_algorithm_heuristic(
+        const TensorLayout& /*src*/, const TensorLayout& /*dst*/,
+        const TensorLayout& /*diff*/, const TensorLayout& /*grad*/,
+        size_t /*workspace_limit_in_bytes*/, const AlgoAttribute& positive_attr,
+        const AlgoAttribute& negative_attr) {
+    auto algo = static_cast<HandleImpl*>(handle())->default_pooling_bwd_algo();
+    algo->check_attribute(positive_attr, negative_attr);
+    return algo;
 }
 
 WorkspaceBundle PoolingBackwardImpl::get_workspace_bundle(

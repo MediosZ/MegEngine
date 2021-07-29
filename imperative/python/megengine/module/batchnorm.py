@@ -26,6 +26,7 @@ class _BatchNorm(Module):
         affine=True,
         track_running_stats=True,
         freeze=False,
+        compute_mode="default",
         **kwargs
     ):
         super(_BatchNorm, self).__init__(**kwargs)
@@ -36,6 +37,7 @@ class _BatchNorm(Module):
         self.track_running_stats = track_running_stats
         self._track_running_stats_saved = track_running_stats
         self.freeze = freeze
+        self.compute_mode = compute_mode
         if self.freeze:
             assert (
                 self._track_running_stats_saved
@@ -98,8 +100,7 @@ class _BatchNorm(Module):
             if _bias is not None:
                 _bias = _bias.detach()
 
-            # Need to expand to elementwise operations here
-            # see MGB_IMPL_OPR_GRAD(BatchNormForward) in src/opr/impl/dnn/batch_norm.cpp
+            # fastpath excution for freeze
             scale = (self.running_var + self.eps) ** (-0.5)
             if _weight is not None:
                 scale *= _weight
@@ -123,6 +124,7 @@ class _BatchNorm(Module):
             or ((self.running_mean is None) and (self.running_var is None)),
             momentum=exponential_average_factor,
             eps=self.eps,
+            compute_mode=self.compute_mode,
         )
 
         if _ndims != 4:
@@ -141,6 +143,35 @@ class _BatchNorm(Module):
 class SyncBatchNorm(_BatchNorm):
     r"""
     Applies Synchronized Batch Normalization for distributed training.
+
+    :type num_features: int
+    :param num_features: usually :math:`C` from an input of shape
+        :math:`(N, C, H, W)` or the highest ranked dimension of an input
+        less than 4D.
+    :type eps: float
+    :param eps: a value added to the denominator for numerical stability.
+        Default: 1e-5
+    :type momentum: float
+    :param momentum: the value used for the ``running_mean`` and ``running_var`` computation.
+        Default: 0.9
+    :type affine: bool
+    :param affine: a boolean value that when set to True, this module has
+        learnable affine parameters. Default: True
+    :type track_running_stats: bool
+    :param track_running_stats: when set to True, this module tracks the
+        running mean and variance. When set to False, this module does not
+        track such statistics and always uses batch statistics in both training
+        and eval modes. Default: True
+    :type freeze: bool
+    :param freeze: when set to True, this module does not update the
+        running mean and variance, and uses the running mean and variance instead of
+        the batch mean and batch variance to normalize the input. The parameter takes effect
+        only when the module is initilized with track_running_stats as True.
+        Default: False
+    :type group: :class:`~megengine.distributed.Group`
+    :param group: communication group, caculate mean and variance between this group.
+        Default: :obj:`~megengine.distributed.WORLD`
+    :return: output tensor.
     """
 
     def __init__(
@@ -251,14 +282,6 @@ class BatchNorm2d(_BatchNorm):
     If :attr:`track_running_stats` is set to ``False``, this layer will not
     keep running estimates, batch statistics is used during
     evaluation time instead.
-
-    .. note::
-        This :attr:`momentum` argument is different from one used in optimizer
-        classes and the conventional notion of momentum. Mathematically, the
-        update rule for running statistics here is
-        :math:`\hat{x}_\text{new} = \text{momentum} \times \hat{x} + (1 - \text{momentum}) \times x_t`,
-        where :math:`\hat{x}` is the estimated statistic and :math:`x_t` is the
-        new observed value.
 
     Because the Batch Normalization is done over the `C` dimension, computing
     statistics on `(N, H, W)` slices, it's common terminology to call this

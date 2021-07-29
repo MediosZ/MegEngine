@@ -13,6 +13,7 @@
 
 #include "megbrain_build_config.h"
 #include "megdnn/basic_types.h"
+#include "megdnn/common.h"
 
 #include <memory>
 #include <string>
@@ -108,34 +109,33 @@ void __on_exception_throw__(const std::exception &exc)
     } while(0)
 
 // assert
+void __assert_fail__(const char* file, int line, const char* func,
+                     const char* expr, const char* msg_fmt = 0, ...)
+        __attribute__((format(printf, 5, 6), noreturn));
 #if MGB_ASSERT_LOC
 /*!
  * \brief extended assert
  * extra diagnostics message (in printf format) could be printed when assertion
  * fails; the asserted expression is guaranteed to be evaluated
  */
-#define mgb_assert(expr, msg...) \
-    do { \
-        if (mgb_unlikely(!(expr))) \
-            ::mgb::__assert_fail__(__FILE__, __LINE__, \
-                    __PRETTY_FUNCTION__, # expr, ##msg); \
-    } while(0)
-void __assert_fail__(
-        const char *file, int line, const char *func,
-        const char *expr, const char *msg_fmt = 0, ...)
-    __attribute__((format(printf, 5, 6), noreturn));
+#define mgb_assert(expr, msg...)                                            \
+    do {                                                                    \
+        if (mgb_unlikely(!(expr)))                                          \
+            ::mgb::__assert_fail__(__FILE__, __LINE__, __PRETTY_FUNCTION__, \
+                                   #expr, ##msg);                           \
+    } while (0)
 #else
-#define mgb_assert(expr, msg...) \
-    do { \
-        if (mgb_unlikely(!(expr))) \
-            ::mgb::__assert_fail__(); \
-    } while(0)
-void __assert_fail__() __attribute__((noreturn));
-#endif // MGB_ASSERT_LOC
+#define mgb_assert(expr, msg...)                                              \
+    do {                                                                      \
+        if (mgb_unlikely(!(expr)))                                            \
+            ::mgb::__assert_fail__(                                           \
+                    "about location info, please build with debug", __LINE__, \
+                    NULL, #expr, ##msg);                                      \
+    } while (0)
+#endif  // MGB_ASSERT_LOC
 
 /* ================ logging ================  */
-//! caused by need remve some words at opt release
-#if MGB_ENABLE_LOGGING
+#if MGB_ASSERT_LOC
 #define mgb_log_debug(fmt...) \
     _mgb_do_log(::mgb::LogLevel::DEBUG, __FILE__, __func__, __LINE__, fmt)
 #define mgb_log(fmt...) \
@@ -154,7 +154,6 @@ void __assert_fail__() __attribute__((noreturn));
     _mgb_do_log(::mgb::LogLevel::WARN, "", "", __LINE__, fmt)
 #define mgb_log_error(fmt...) \
     _mgb_do_log(::mgb::LogLevel::ERROR, LOC, "", __LINE__, fmt)
-#undef LOC
 #endif
 enum class LogLevel { DEBUG, INFO, WARN, ERROR, NO_LOG };
 
@@ -200,17 +199,6 @@ void __log__(LogLevel level, const char *file, const char *func, int line,
 #endif // MGB_ENABLE_LOGGING
 
 /* ================ misc ================  */
-
-#if MGB_ENABLE_GETENV
-#define MGB_GETENV  ::std::getenv
-#else
-#define MGB_GETENV(_name)  static_cast<char*>(nullptr)
-#endif
-
-#ifdef WIN32
-#define unsetenv(_name) _putenv_s(_name, "");
-#define setenv(name,value,overwrite) _putenv_s(name,value)
-#endif
 
 // use some macro tricks to get lock guard with unique variable name
 #define MGB_TOKENPASTE(x, y) x ## y

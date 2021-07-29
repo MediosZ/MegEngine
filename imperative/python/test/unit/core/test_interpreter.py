@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
@@ -33,7 +36,7 @@ def test_level1_infer_value():
 def test_level1_infer_shape_with_unknown():
     config_async_level(2)
     a = mge.tensor([[1, 2, 2, 3]], dtype="float32")
-    b = mge.tensor([1, 1])
+    b = mge.tensor([1, 1], dtype="float32")
     multi2 = mge.tensor(np.array([[2, 0], [0, 2]]), dtype="float32")
     c = F.matmul(b, multi2)
     # make DepType::SHAPE unknown
@@ -76,3 +79,14 @@ def test_swap_drop_basic():
     z.numpy()
     _set_swap_flag(False)
     _set_drop_flag(False)
+
+
+def test_finalize():
+    prog = """
+import megengine
+with megengine.core.option("enable_host_compute", 0):
+    x = megengine.tensor(0)
+    y = x + 1
+    y.numpy()
+"""
+    subprocess.check_call([sys.executable, "-c", prog])

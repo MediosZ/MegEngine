@@ -16,6 +16,10 @@
 #include "megbrain/opr/dnn/convolution.h"
 #include "megbrain/opr/search_policy/algo_chooser_helper.h"
 
+#if MGB_CUDA
+#include <cuda.h>
+#endif
+
 namespace mgb {
 namespace gopt {
 
@@ -322,7 +326,31 @@ namespace gopt {
         static std::unique_ptr<EnableNchw44DotPass> make_nchw44_dot_converter();
     };
 
-    struct OptimizeForInferenceOptions : cg::GraphCommonOptimizeOptions {};
+    struct OptimizeForInferenceOptions : cg::GraphCommonOptimizeOptions {
+        uint64_t serialize() {
+            uint64_t ret = 0;
+            ret |= (uint64_t)layout_transform << 32;
+            if (f16_io_f32_comp) ret |= 1u;
+            if (f16_io_comp) ret |= 1u << 1;
+            if (fuse_conv_bias_nonlinearity) ret |= 1u << 2;
+            if (fuse_conv_bias_with_z) ret |= 1u << 3;
+            if (weight_preprocess) ret |= 1u << 4;
+            if (fuse_preprocess) ret |= 1u << 5;
+            return ret;
+        }
+
+        static OptimizeForInferenceOptions deserialize(uint64_t buf) {
+            OptimizeForInferenceOptions ret;
+            ret.f16_io_f32_comp = buf & 1u;
+            ret.f16_io_comp = buf & 1u << 1;
+            ret.fuse_conv_bias_nonlinearity = buf & 1u << 2;
+            ret.fuse_conv_bias_with_z = buf & 1u << 3;
+            ret.weight_preprocess = buf & 1u << 4;
+            ret.fuse_preprocess = buf & 1u << 5;
+            ret.layout_transform = (LayoutTransform)(buf >> 32);
+            return ret;
+        }
+    };
 
     /*!
      * \brief optimize a computing graph for inference
@@ -403,10 +431,43 @@ namespace gopt {
             void apply(OptState& opt) const override;
     };
 
+#if CUDA_VERSION >= 10020
     class FoldingConvBiasDimshufflePass final : public Pass {
         public:
             const char* name() const override;
             void apply(OptState& opt) const override;
+    };
+#endif
+
+    /*!
+     * \brief padding channel to enable fast int8/int4 support
+     * assume input network is built in NCHW tensor format
+     */
+    class PaddingChannelPass final : public Pass {
+        public:
+            const char* name() const override;
+            void apply(OptState& opt) const override;
+    };
+
+    /*!
+     * \brief convert tensor format to nchw64 to enable tensorcore int4 on CUDA
+     * we assume that the input network is in NCHW layout
+     */
+    class EnableNCHW64Pass final : public TensorReformatPass {
+    public:
+        using Format = opr::ConvBias::Param::Format;
+        const char* name() const override {
+            return mgb_cstr_log("tensor_format_nchw64");
+        }
+
+        //! make nchw -> nchw64 converter opt pass
+        static std::unique_ptr<EnableNCHW64Pass> make_nchw64_converter();
+
+    private:
+        ThinHashMap<OperatorNodeBase*, Format> m_opr_format_map;
+
+        VarNode* on_graph_endpoint_var(VarNode* new_var,
+                                       VarNode* orig_var) const override;
     };
 
 }  // namespace gopt

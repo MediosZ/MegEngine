@@ -16,6 +16,7 @@
 #include "src/cuda/conv_bias/helper.h"
 #include "src/cuda/cudnn_wrapper.h"
 #include "src/cuda/utils.h"
+#include "src/common/conv_bias.h"
 
 using namespace megdnn;
 using namespace cuda;
@@ -23,17 +24,51 @@ using namespace conv_bias;
 
 bool ConvBiasForwardImpl::AlgoCUDNNConvBiasActivation::is_available(
         const SizeArgs& args) const {
+    if (args.filter_meta.format != Param::Format::NCHW &&
+        args.filter_meta.format != Param::Format::NHWC) {
+        if (!args.src_layout->is_contiguous() ||
+            !args.dst_layout->is_contiguous()) {
+            return false;
+        }
+    }
+    if ((args.src_layout->dtype.enumv() == DTypeEnum::QuantizedS4 ||
+         args.src_layout->dtype.enumv() == DTypeEnum::Quantized4Asymm) &&
+        args.filter_layout->dtype.enumv() == DTypeEnum::QuantizedS4)
+        return false;
+    if (args.dst_layout->dtype.enumv() == DTypeEnum::QuantizedS4 ||
+        args.dst_layout->dtype.enumv() == DTypeEnum::Quantized4Asymm)
+        return false;
     if (args.src_layout->dtype == args.filter_layout->dtype &&
         args.src_layout->dtype == dtype::BFloat16()) {
         return false;
     }
 
     if (args.bias_layout->ndim == 0 ||
-        !conv_bias::check_bias_share_in_channel(*(args.bias_layout),
+        !check_bias_share_in_channel(*(args.bias_layout),
                                                 args.opr->param().format)) {
         return false;
     }
     auto&& param = args.opr->param();
+
+#if (CUDNN_MAJOR == 8 && CUDNN_MINOR < 2)
+    if (m_cudnn_enum == CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM &&
+        param.format == param::ConvBias::Format::NCHW4 &&
+        args.filter_meta.group * args.filter_meta.ocpg > 256 &&
+        args.src_layout->dtype.enumv() == DTypeEnum::QuantizedS8 &&
+        args.filter_layout->dtype.enumv() == DTypeEnum::QuantizedS8) {
+        return false;
+    }
+#endif
+
+    // FIXME: cudnn cannot handle the case when the initial value of dst tensor
+    // contains nan and beta is zero, because the result of 0.f * nan is still
+    // nan
+    if (args.src_layout->dtype.enumv() == DTypeEnum::QuantizedS8 &&
+        args.dst_layout->dtype.enumv() == DTypeEnum::Float32 &&
+        param.format == param::ConvBias::Format::NCHW) {
+        return false;
+    }
+
     //! FIXME: conv kernel of cudnn for NCHW4_NCHW tensor format causes illegal
     //! memory access errors, so we have to disable this kernel here.
     if (param.format == param::ConvBias::Format::NCHW4_NCHW ||
@@ -52,6 +87,7 @@ bool ConvBiasForwardImpl::AlgoCUDNNConvBiasActivation::is_available(
     }
 
     if (param.format == param::ConvBias::Format::NCHW8 ||
+        param.format == param::ConvBias::Format::NCHW64 ||
         param.format == param::ConvBias::Format::CHWN4)
         return false;
     if (param.format == param::ConvBias::Format::NCHW32) {
@@ -107,7 +143,8 @@ bool ConvBiasForwardImpl::AlgoCUDNNConvBiasActivation::is_available(
             megdnn_throw("unsupported NonlineMode");
     }
     size_t workspace_size;
-    auto status = cudnnGetConvolutionForwardWorkspaceSize(
+    auto& cudnn = args.handle->cudnn();
+    auto status = cudnn.GetConvolutionForwardWorkspaceSize(
             args.handle->cudnn_handle(), D.src_desc.desc, D.filter_desc.desc,
             D.conv_desc.conv_desc, D.dst_desc.desc, m_cudnn_enum,
             &workspace_size);
@@ -120,7 +157,8 @@ size_t ConvBiasForwardImpl::AlgoCUDNNConvBiasActivation::get_workspace_in_bytes(
 
     args.init_conv_bias_desc(D);
     size_t workspace_size;
-    auto status = cudnnGetConvolutionForwardWorkspaceSize(
+    auto& cudnn = args.handle->cudnn();
+    auto status = cudnn.GetConvolutionForwardWorkspaceSize(
             args.handle->cudnn_handle(), D.src_desc.desc, D.filter_desc.desc,
             D.conv_desc.conv_desc, D.dst_desc.desc, m_cudnn_enum,
             &workspace_size);
@@ -166,8 +204,7 @@ void ConvBiasForwardImpl::AlgoCUDNNConvBiasActivation::exec(
          dst_dtype = args.dst_layout->dtype;
     megdnn_assert(
             (src_dtype.category() == dst_dtype.category()) ||
-            (args.opr->param().format == param::ConvBias::Format::NCHW4_NCHW &&
-             src_dtype.enumv() == DTypeEnum::QuantizedS8 &&
+            (src_dtype.enumv() == DTypeEnum::QuantizedS8 &&
              dst_dtype.enumv() == DTypeEnum::Float32));
     megdnn_assert(src_dtype.category() == filter_dtype.category());
 

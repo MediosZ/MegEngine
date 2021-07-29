@@ -104,6 +104,8 @@ private:
     cb(ConvBiasForward) \
     cb(Images2NeibsForward) \
     cb(Images2NeibsBackward) \
+    cb(SlidingWindowTransposeForward) \
+    cb(SlidingWindowTransposeBackward) \
     cb(ElemwiseForward) \
     cb(ElemwiseMultiType) \
     cb(AddUpdateForward) \
@@ -159,6 +161,10 @@ private:
     cb(SleepForward) \
     cb(UniformRNG) \
     cb(GaussianRNG) \
+    cb(GammaRNG) \
+    cb(BetaRNG) \
+    cb(PoissonRNG) \
+    cb(PermutationRNG) \
     cb(SeparableConvForward) \
     cb(SeparableFilterForward) \
     cb(BNForward) \
@@ -194,6 +200,9 @@ private:
     cb(LocalShareBackwardFilter) \
     cb(ROIAlignForward) \
     cb(ROIAlignBackward) \
+    cb(CorrelationForward) \
+    cb(CorrelationBackwardData1) \
+    cb(CorrelationBackwardData2) \
     cb(BatchConvBiasForward) \
     cb(Remap) \
     cb(RemapBackwardData) \
@@ -204,7 +213,10 @@ private:
     cb(FakeQuantForward) \
     cb(FakeQuantBackward) \
     cb(TQTForward) \
-    cb(TQTBackward)
+    cb(TQTBackward) \
+    cb(CheckHasInf) \
+    cb(LSQForward) \
+    cb(LSQBackward)
 
 /*!
  * \brief specialize HandleImpl::create_operator for a single opr type;

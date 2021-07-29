@@ -289,8 +289,10 @@ ExternCOprRunner::ExternCOprRunner(std::string& name,
           m_desc{std::move(desc)},
           m_dump_name{name},
           m_param{nullptr} {
-    mgb_assert(m_desc->size == sizeof(MGBOprDesc),
-               "invalid MGBOprDesc size: expect=%zu got=%u, may caused by "
+    auto size_diff = sizeof(MGBOprDesc) - m_desc->size;
+    is_loader_support_dynamic_param = (0 == size_diff) ? true : false;
+    mgb_assert(0 == size_diff || sizeof(ExternCOprParam*) == size_diff,
+               "invalid OprDesc size: expect=%zu got=%u, may caused by "
                "extern_c_opr.h mismatch, please confirm that the "
                "extern_c_opr.h used when compiling the loader is consistent "
                "with the runtime caller build used",
@@ -345,6 +347,8 @@ void ExternCOprRunner::check_param() {
     //! ExternDeviceTensor for some case, ExternCOprParam may only config
     //! device_id, extra_info, etc. so we need consider nr_input=0 or
     //! nr_output=0
+    if (!is_loader_support_dynamic_param)
+        return;
     auto check = [](size_t nr_config_tensor, size_t var_node_size,
                     ExternDeviceTensor* e_tensor,
                     const VarNodeArray& var_node_array, const char* msg) {
@@ -527,8 +531,8 @@ cg::OperatorNodeBase* ExternCOprRunner::shallow_copy(
 }
 
 MGBTensorShape ExternCOprRunner::tensor_shape_to_c(const TensorShape& shape) {
-    mgb_assert(shape.ndim <= MGB_TENSOR_MAX_NDIM, "shape ndim too large: %zu",
-               shape.ndim);
+    mgb_throw_if(shape.ndim > MGB_TENSOR_MAX_NDIM, MegBrainError,
+                 "shape ndim too large: %zu", shape.ndim);
     MGBTensorShape ret;
     ret.ndim = shape.ndim;
     for (size_t i = 0; i < shape.ndim; ++i) {

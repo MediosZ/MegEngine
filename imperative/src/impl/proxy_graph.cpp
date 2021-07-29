@@ -364,6 +364,7 @@ class ProxyGraph::ProxyGraphImpl : public cg::ComputingGraph {
     ProxyGraph* m_owner;
     MemPool<VarNode> m_var_node_pool;
     std::vector<std::unique_ptr<OperatorNodeBase>> m_opr_refkeeper;
+    std::mutex m_opr_refkeeper_mtx;
     CompNode::UnorderedSet m_used_comp_node;
     VarReceiverInfo m_var_receiver_info;
 public:
@@ -431,7 +432,7 @@ public:
     }
 
     std::shared_ptr<void> on_comp_node_finalize() override {
-        // FIXME: mutex
+        MGB_LOCK_GUARD(m_opr_refkeeper_mtx);
         mgb_assert(!m_owner->m_cur_opr);
         // finalize would do sync first
         m_opr_refkeeper.clear();
@@ -521,9 +522,10 @@ SmallVector<LogicalTensorDesc> ProxyGraph::infer_output_attrs(
 
 void ProxyGraph::invoke_op(const OpDef& opdef,
         const SmallVector<Tensor*>& inputs,
-        const SmallVector<Tensor*>& outputs) {
+        const SmallVector<Tensor*>& outputs,
+        const SmallVector<Tensor*>& workspaces) {
     CUR_OPR_GUARD(get_proxy_opr(opdef, inputs));
-    init_output_tensor(outputs);
+    init_output_tensor(outputs, workspaces);
     for (auto oup : m_cur_opr->output()) {
         m_graph->add_used_comp_node(oup->comp_node());
     }
@@ -543,22 +545,30 @@ void ProxyGraph::cleanup() {
     m_cur_opr = nullptr;
 }
 
-void ProxyGraph::init_output_tensor(const SmallVector<Tensor*>& outputs) {
+void ProxyGraph::init_output_tensor(const SmallVector<Tensor*>& outputs, const SmallVector<Tensor*>& workspaces) {
     // get proxy opr
     auto proxy = m_cur_opr;
 
     do_shape_infer(true);
 
     size_t j = 0;
+    size_t k = 0;
     for (auto&& var : proxy->output()) {
         auto &&chk = var->m_mem_plan.reset_from_owner_var().chunk();
         if (var->contain_flag(VarNode::Flag::VOLATILE_CONTENT)) {
-            // alloc workspace
-            TensorLayout layout{var->shape(), var->dtype(), var->format()};
-            DeviceTensorStorage storage;
-            storage.comp_node(var->comp_node())
-                   .ensure_size(layout.dtype.size(layout.total_nr_elems()));
-            var->m_dev_tensor.reset(storage, layout);
+            // workspace
+            if (workspaces.size()) {
+                mgb_assert(k < workspaces.size());
+                auto && layout = workspaces[k]->layout();
+                mgb_assert(var->comp_node() == workspaces[k]->comp_node() &&
+                            var->shape().eq_shape(layout) &&
+                            var->dtype() == layout.dtype);
+                var->m_dev_tensor = workspaces[k]->dev_tensor();
+                ++ k;
+            } else {
+                TensorLayout layout{var->shape(), var->dtype(), var->format()};
+                var->m_dev_tensor = BlobManager::inst()->alloc_workspace_with_defrag(var->comp_node(), layout);
+            }
         } else {
             mgb_assert(j < outputs.size());
             auto &&tensor = outputs[j];
@@ -566,16 +576,13 @@ void ProxyGraph::init_output_tensor(const SmallVector<Tensor*>& outputs) {
             mgb_assert(var->comp_node() == tensor->comp_node() &&
                         var->shape().eq_shape(layout) &&
                         var->dtype() == layout.dtype);
-            if (!tensor->layout().is_empty()) {
-                var->assign_dev_tensor_from_tensor(tensor->dev_tensor());
-            } else {
-                var->m_dev_tensor.storage({var->comp_node()});
-            }
+            var->assign_dev_tensor_from_tensor(tensor->dev_tensor());
             ++ j;
         }
         chk.mem_alloc_status.set_from_owner_var();
     }
     mgb_assert(j == outputs.size());
+    mgb_assert(k == workspaces.size());
 
     // Memory forwarding was bypassed in megbrain with graph option
     // imerative_proxy_graph on, here we call mem_plan_fwd_in2out_readonly
@@ -629,6 +636,26 @@ std::tuple<SmallVector<LogicalTensorDesc>, bool> ProxyGraph::infer_output_attrs_
     return {outputs, validated && !need_check};
 }
 
+std::tuple<SmallVector<MemoryDesc>, SmallVector<MemoryDesc>> ProxyGraph::infer_output_mem_desc(
+        const OpDef& def,
+        const SmallVector<Tensor*>& inputs_tensors,
+        const SmallVector<MemoryDesc>& inputs_mems) {
+    auto opr = get_proxy_opr(def, inputs_tensors);
+    CUR_OPR_GUARD(opr);
+    do_shape_infer(true);
+    SmallVector<MemoryDesc> outputs;
+    SmallVector<MemoryDesc> workspaces;
+    size_t cur_id = 0;
+    for (auto&& i : opr->output()) {
+        if (i->contain_flag(VarNode::Flag::VOLATILE_CONTENT)) {
+            workspaces.push_back({{i->shape(), i->dtype(), i->format()}, 0, i->comp_node(), StorageIdentifier::make(++ cur_id)});
+        } else {
+            outputs.push_back({{i->shape(), i->dtype()}, 0, i->comp_node(), StorageIdentifier::make(++ cur_id)});
+        }
+    }
+    return {outputs, workspaces};
+}
+
 struct ProxyGraph::GradGraph {
     cg::VarNodeArray inputs;
     cg::VarNodeArray outputs;
@@ -671,8 +698,7 @@ ProxyGraph::make_backward_graph(
     auto* gfunc = cg::lookup_grad_func(fwd->dyn_typeinfo());
 
     BackwardGraphResult result;
-    auto&& backward = BackwardGraph::make();
-    auto&& igraph = backward->cast_final_safe<BackwardGraph>().graph();
+    auto&& igraph = result.backward;
 
     size_t nr_backward_graph_inputs = 0;
     auto gen_expr = [this, &var2idx, &igraph, &push, &fwd,
@@ -684,7 +710,7 @@ ProxyGraph::make_backward_graph(
             ++ nr_backward_graph_inputs;
             push(op->output(0));
         } else {
-            std::vector<size_t> inputs, outputs;
+            SmallVector<size_t> inputs, outputs;
             for (auto &&i : op->input()) {
                 if (i->owner_opr() == fwd) {
                     if (var2idx.find(i) == var2idx.end()) {
@@ -697,7 +723,7 @@ ProxyGraph::make_backward_graph(
             for (auto &&i : op->usable_output()) {
                 outputs.push_back(push(i));
             }
-            igraph.exprs.emplace_back(OpDef::make_from_op_node(op), inputs, outputs);
+            igraph.exprs.push_back({OpDef::make_from_op_node(op), inputs, outputs});
         }
     };
 
@@ -772,36 +798,6 @@ ProxyGraph::make_backward_graph(
     write_inputs(outputs);
     write_inputs(output_grads);
     mgb_assert(igraph.inputs.size() == nr_backward_graph_inputs);
-
-    auto treat_as_single = [](auto&& igraph) {
-        if (igraph.exprs.size() != 1)
-            return false;
-        auto&& expr = igraph.exprs[0];
-        auto&& expr_inputs = std::get<1>(expr);
-        if (expr_inputs.size() != igraph.inputs.size()) {
-            return false;
-        }
-        for (size_t i = 0; i < expr_inputs.size(); ++ i) {
-            if (igraph.inputs[i] != expr_inputs[i]) {
-                return false;
-            }
-        }
-        auto&& expr_outputs = std::get<2>(expr);
-        if (expr_outputs.size() != igraph.outputs.size()) {
-            return false;
-        }
-        for (size_t i = 0; i < expr_outputs.size(); ++ i) {
-            if (igraph.outputs[i] != expr_outputs[i]) {
-                return false;
-            }
-        }
-        return true;
-    };
-    if (treat_as_single(igraph)) {
-        result.backward = std::get<0>(igraph.exprs[0]);
-    } else {
-        result.backward = backward;
-    }
     return result;
 }
 

@@ -79,6 +79,8 @@ namespace {
             if (g_unspec_locator_type == DT::UNSPEC) {
                 if (CudaCompNode::available()) {
                     g_unspec_locator_type = DT::CUDA;
+                } else if (ROCmCompNode::available()) {
+                    g_unspec_locator_type = DT::ROCM;
                 } else {
                     g_unspec_locator_type = DT::CPU;
                 }
@@ -554,6 +556,13 @@ CompNode CompNode::load(const Locator& locator_physical,
 }
 
 void CompNode::finalize() {
+#if MGB_CUDA && defined(WIN32)
+    //! FIXME: windows cuda driver shutdown before call atexit function even
+    //! register atexit function after init cuda driver! as a workround recovery
+    //! resource by OS temporarily, may need remove this after upgrade cuda
+    //! runtime
+    return;
+#endif
     comp_node_detail::DepedentObjList::invoke_callback_and_clean();
     CudaCompNode::finalize();
     CpuCompNode::finalize();

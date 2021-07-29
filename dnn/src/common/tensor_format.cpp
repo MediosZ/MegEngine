@@ -35,12 +35,29 @@ TensorFormat TensorFormat::deserialize(const std::string& bin,
         case Type::IMAGE2D_PACK4:
             return Image2DPack4TensorFormat::deserialize(
                     handle, type + 1, bin.size() - sizeof(Type));
+        case Type::LOWBITS_ALIGNED_TO_BYTE:
+            return LowbitsAlignedToBytesTensorFormat::deserialize(
+                    handle, type + 1, bin.size() - sizeof(Type));
         default:
             megdnn_throw("invalid tensor format type in deserialize");
     }
 }
 
 TensorFormat::Format() : m_impl{DefaultTensorFormat::make().m_impl} {}
+
+TensorFormat::Format(DType dtype) {
+    if (dtype.valid() &&
+        dtype.is_quantized_lowbit()) {  // quantized lowbit, by default
+                                        // aligned to bytes
+        size_t size_nbits = dtype.low_bit();
+        megdnn_assert(size_nbits == 1 || size_nbits == 2 || size_nbits == 4,
+                      "unsupported lowbits data type(%s, size in bits: %zu)",
+                      dtype.name(), size_nbits);
+        m_impl = LowbitsAlignedToBytesTensorFormat::make(size_nbits).m_impl;
+    } else {  // non parameterized lowbit, default format
+        m_impl = DefaultTensorFormat::make().m_impl;
+    }
+}
 
 std::string TensorFormat::to_string() const {
     return m_impl->to_string();
@@ -66,8 +83,20 @@ bool TensorFormat::is_default() const {
     return m_impl == default_tensor_format_obj;
 }
 
+bool TensorFormat::is_lowbit_aligned() const {
+    return type() == TensorFormat::Type::LOWBITS_ALIGNED_TO_BYTE;
+}
+
 /* ===================== DefaultFormat ===================== */
+void DefaultTensorFormat::assert_valid(const TensorLayout& layout) const {
+    megdnn_assert(
+            !layout.dtype.valid() || !layout.dtype.is_quantized_lowbit(),
+            "DefaultTensorFormat does not support quantized lowbit tensor(dtype:%s)",
+            layout.dtype.name());
+}
+
 size_t DefaultTensorFormat::init_contiguous_stride(TensorLayout& layout) const {
+    assert_valid(layout);
     if (!layout.ndim)
         return 0;
     megdnn_assert(layout.ndim <= TensorLayout::MAX_NDIM);
@@ -81,11 +110,13 @@ size_t DefaultTensorFormat::init_contiguous_stride(TensorLayout& layout) const {
 }
 
 bool DefaultTensorFormat::is_contiguous_spec(const TensorLayout& layout) const {
+    assert_valid(layout);
     return layout.is_physical_contiguous();
 }
 
 TensorLayout DefaultTensorFormat::collapse_contiguous_spec(
         const TensorLayout& layout) const {
+    assert_valid(layout);
     megdnn_assert(layout.ndim);
     TensorLayout res{layout};
 
@@ -126,6 +157,7 @@ TensorLayout DefaultTensorFormat::collapse_contiguous_spec(
 
 TensorLayout::Span DefaultTensorFormat::span_spec(
         const TensorLayout& layout) const {
+    assert_valid(layout);
     if (layout.ndim == 0)
         return {0, 0, 0, 0};
 
@@ -146,9 +178,6 @@ TensorLayout::Span DefaultTensorFormat::span_spec(
     ++high_elem;
     ptrdiff_t low_byte;
     if (low_elem < 0) {
-        megdnn_assert(!layout.dtype.is_low_bit(),
-                      "tensors with low-bit dytes shouldn't have negative "
-                      "strides");
         low_byte = low_elem * layout.dtype.size();
     } else {
         low_byte = 0;
@@ -243,7 +272,8 @@ void Image2DPackedTensorFormatBase<PIXEL_SIZE>::assert_valid(
     auto m_align_axis = align_axis();
     megdnn_assert(!(layout.shape[layout.ndim - 1] % PIXEL_SIZE),
                   "bad shape: %zu", layout.shape[layout.ndim - 1]);
-    megdnn_assert(layout.dtype.valid() && layout.ndim > m_align_axis);
+    megdnn_assert(layout.dtype.valid() && !layout.dtype.is_quantized_lowbit() &&
+                  layout.ndim > m_align_axis);
     ptrdiff_t first_non_zero_stride = 0;
     for (int i = layout.ndim - 1; i >= 0; --i) {
         megdnn_assert(layout.shape[i] && layout.stride[i] >= 0);
@@ -422,11 +452,153 @@ TensorLayout Image2DPackedTensorFormatBase<PIXEL_SIZE>::collapse_contiguous_spec
     return res;
 }
 
+
 namespace megdnn {
 namespace detail {
 template class Image2DPackedTensorFormatBase<4>;
 }  // namespace detail
 }  // namespace megdnn
+
+/* =============== LowbitsAlignedTensorFormatBase ============== */
+LowbitsAlignedTensorFormatBase::LowbitsAlignedTensorFormatBase(
+        Type type, size_t size_nbits, size_t align_size_in_bits)
+        : ImplBase(type),
+          m_size_nbits(size_nbits),
+          m_align_size_in_bits(align_size_in_bits) {
+    megdnn_assert(!(m_align_size_in_bits % m_size_nbits),
+                  "align size(%zu) must be a multiple of element size(%zu)",
+                  m_align_size_in_bits, m_size_nbits);
+    m_align_size_in_elements = m_align_size_in_bits / m_size_nbits;
+}
+
+std::string LowbitsAlignedTensorFormatBase::to_string() const {
+    return ssprintf("LOWBITS{%zu,%zu}", m_size_nbits, m_align_size_in_bits);
+}
+
+void LowbitsAlignedTensorFormatBase::assert_valid(
+        const TensorLayout& layout) const {
+    megdnn_assert(layout.dtype.valid() && layout.dtype.is_low_bit() &&
+                  layout.dtype.low_bit() == m_size_nbits);
+    bool has_dim_unity_stride = false;
+    bool has_dim_aligned_stride = false;
+    for (int i = layout.ndim - 1; i >= 0; --i) {
+        if (!has_dim_unity_stride && layout.stride[i] == 1)
+            has_dim_unity_stride = true;
+        megdnn_assert(
+                layout.stride[i] >= 0 &&
+                        (layout.stride[i] % m_align_size_in_elements == 0 ||
+                         layout.stride[i] == 1),
+                "bad stride:%s, %ld", layout.to_string().c_str(),
+                static_cast<long>(layout.stride[i]));
+        if (!has_dim_aligned_stride &&
+            static_cast<size_t>(layout.stride[i]) == m_align_size_in_elements)
+            has_dim_aligned_stride = true;
+    }
+
+    megdnn_assert(
+            layout.ndim == 0 || has_dim_unity_stride || has_dim_aligned_stride,
+            "innermost dim not contiguous");
+}
+
+void LowbitsAlignedTensorFormatBase::serialize_append(
+        std::string& result) const {
+    SerializePack pack;
+    pack.size_nbits = m_size_nbits;
+    pack.align_size_in_bits = m_align_size_in_bits;
+    megdnn_assert(pack.align_size_in_bits ==
+                  m_align_size_in_bits);  // detect overflow;
+    result.append(reinterpret_cast<char*>(&pack), sizeof(pack));
+}
+
+TensorLayout::Span LowbitsAlignedTensorFormatBase::span_spec(
+        const TensorLayout& layout) const {
+    assert_valid(layout);
+    if (layout.ndim == 0)
+        return {0, 0, 0, 0};
+
+    size_t high_elem = 0;
+    for (size_t i = 0; i < layout.ndim; ++i) {
+        auto shape_val = layout.shape[i];
+        if (!shape_val) {
+            return {0, 0, 0, 0};
+        }
+        auto stride_val = layout.stride[i];
+        megdnn_assert(stride_val >= 0,
+                      "lowbit tensors shouldn't have negative strides");
+        high_elem += (shape_val - 1) * stride_val;
+    }
+    ++high_elem;
+    size_t high_byte = layout.dtype.size(high_elem);
+    return TensorLayout::Span(0, 0, high_elem, high_byte);
+}
+
+size_t LowbitsAlignedTensorFormatBase::init_contiguous_stride(
+        TensorLayout& layout) const {
+    if (!layout.ndim)
+        return 0;
+    megdnn_assert(layout.ndim <= TensorLayout::MAX_NDIM);
+    size_t accum = 1;
+    SafeMultiplies<size_t> mul;
+    for (size_t i = layout.ndim; i; --i) {
+        layout.stride[i - 1] = accum;
+        auto multiplier = layout.shape[i - 1];
+        if (i == layout.ndim)
+            multiplier = round_up(multiplier, m_align_size_in_elements);
+        accum = mul(accum, multiplier);
+    }
+    assert_valid(layout);
+    return accum;
+}
+
+bool LowbitsAlignedTensorFormatBase::is_contiguous_spec(
+        const TensorLayout& layout) const {
+    assert_valid(layout);
+    ptrdiff_t expected = 1;
+    for (int i = static_cast<int>(layout.ndim) - 1; i >= 0; --i) {
+        bool is_valid_stride =
+                (layout.stride[i] == expected) ||
+                (expected == 1 &&
+                 (int)layout.stride[i] ==
+                         round_up(1, (int)m_align_size_in_elements));
+        if (layout.shape[i] != 1 && !is_valid_stride)
+            return false;
+        auto multiplier = layout.shape[i];
+        if (i == static_cast<int>(layout.ndim) - 1)
+            multiplier = round_up(multiplier, m_align_size_in_elements);
+        expected *= multiplier;
+    }
+    return expected != 0;
+}
+
+TensorLayout LowbitsAlignedTensorFormatBase::collapse_contiguous_spec(
+        const TensorLayout& layout) const {
+    assert_valid(layout);
+    TensorLayout res{layout};
+    for (int i = static_cast<int>(res.ndim) - 1; i >= 0; --i) {
+        if (!res.shape[i]) {
+            // empty tensor
+            res.ndim = 1;
+            res.shape[0] = 0;
+            res.stride[0] = 1;
+            return res;
+        }
+        if (res.shape[i] == 1) {
+            res.remove_axis_inplace(i);
+        }
+    }
+
+    megdnn_assert(res.ndim && res.shape[res.ndim - 1]);
+    for (int i = static_cast<int>(res.ndim) - 2; i >= 0; --i) {
+        megdnn_assert(res.shape[i]);
+        if (res.stride[i] ==
+            res.stride[i + 1] * static_cast<ptrdiff_t>(res.shape[i + 1])) {
+            res.shape[i] *= res.shape[i + 1];
+            res.stride[i] = res.stride[i + 1];
+            res.remove_axis_inplace(i + 1);
+        }
+    }
+    return res;
+}
 
 /* ===================== Image2DPack4TensorFormat  ===================== */
 TensorFormat Image2DPack4TensorFormat::make_raw(
@@ -464,6 +636,30 @@ TensorFormat Image2DPack4TensorFormat::deserialize(const Handle* handle,
 
 TensorFormat Image2DPack4TensorFormat::change_axis(size_t axis) const {
     return make_raw(axis, align_size_in_elements(), vendor());
+}
+
+/* ===================== LowbitsitsAlignedToBytesTensorFormat
+ * ===================== */
+TensorFormat LowbitsAlignedToBytesTensorFormat::make(size_t size_nbits) {
+    static std::mutex mtx;
+    static std::unordered_map<
+            uint64_t, std::unique_ptr<LowbitsAlignedToBytesTensorFormat>>
+            cache;
+    megdnn_assert(!(8 % size_nbits));
+    MEGDNN_LOCK_GUARD(mtx);
+    auto&& ptr = cache[static_cast<uint32_t>(size_nbits)];
+    if (!ptr) {
+        ptr.reset(new LowbitsAlignedToBytesTensorFormat{size_nbits});
+    }
+    return impl_to_tensor_format(ptr.get());
+}
+
+TensorFormat LowbitsAlignedToBytesTensorFormat::deserialize(const Handle*,
+                                                            const void* buf,
+                                                            size_t size) {
+    megdnn_assert(size == sizeof(SerializePack));
+    auto pack = *static_cast<const SerializePack*>(buf);
+    return make(pack.size_nbits);
 }
 
 // vim: syntax=cpp.doxygen

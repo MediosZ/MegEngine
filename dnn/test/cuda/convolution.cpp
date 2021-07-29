@@ -20,6 +20,7 @@
 #include "test/common/rng.h"
 #include "test/cuda/benchmark.h"
 #include "src/cuda/utils.h"
+#include "test/common/accuracy_shake_checker.h"
 
 #define V1(x) #x
 #define V(x) V1(x)
@@ -237,6 +238,25 @@ TEST_F(CUDA, CONVOLUTION_BACKWARD_DATA) {
     }
 }
 
+TEST_F(CUDA, CONVOLUTION_BACKWARD_DATA_CUDNN) {
+    if (cuda::is_compute_capability_required(7, 0))
+        return;
+    using namespace convolution;
+    Checker<ConvolutionBackwardData> checker(handle_cuda());
+    checker.set_before_exec_callback(AlgoChecker<ConvolutionBackwardData>(
+            "CUDNN_CONVOLUTION"));
+    //! noncontiguous case
+    {
+        param::Convolution param;
+        param.pad_h = param.pad_w = 1;
+        checker.set_param(param).execl(TensorLayoutArray{
+                {{16, 16, 3, 3}, {144, 9, 3, 1}, dtype::Float32()},
+                {{2, 16, 7, 7}, {1568, 49, 7, 1}, dtype::Float32()},
+                {{2, 16, 7, 7}, {1568, 49, 7, 1}, dtype::Float32()},
+        });
+    }
+}
+
 TEST_F(CUDA, CONVOLUTION_BACKWARD_DATA_MATMUL) {
     using namespace convolution;
     std::vector<TestArg> args = get_args_cuda_conv_bwd_data();
@@ -263,6 +283,16 @@ TEST_F(CUDA, CONVOLUTION_BACKWARD_DATA_MATMUL) {
                 .set_epsilon(1e-3)
                 .set_param(arg.param)
                 .exec(TensorLayoutArray{filter, dst, src});
+    }
+    //! noncontiguous case
+    {
+        param::Convolution param;
+        param.pad_h = param.pad_w = 1;
+        checker.set_param(param).execl(TensorLayoutArray{
+                {{16, 16, 3, 3}, {144, 9, 3, 1}, dtype::Float32()},
+                {{2, 16, 7, 7}, {1568, 49, 7, 1}, dtype::Float32()},
+                {{2, 16, 7, 7}, {1568, 49, 7, 1}, dtype::Float32()},
+        });
     }
 }
 
@@ -478,6 +508,38 @@ TEST_F(CUDA, CONVOLUTION_BACKWARD_FILTER_MATMUL) {
                 .set_epsilon(1e-3)
                 .set_param(arg.param)
                 .exec(TensorLayoutArray{src, dst, filter});
+    }
+    //! noncontiguous case
+    {
+        NormalRNG default_rng;
+        param::Convolution param;
+        param.pad_h = param.pad_w = 1;
+        checker.set_rng(0, &default_rng)
+                .set_rng(1, &default_rng)
+                .set_param(param)
+                .execl(TensorLayoutArray{
+                        {{2, 16, 7, 7}, {1568, 49, 7, 1}, dtype::Float32()},
+                        {{2, 16, 7, 7}, {1568, 49, 7, 1}, dtype::Float32()},
+                        {{16, 16, 3, 3}, {144, 9, 3, 1}, dtype::Float32()}});
+    }
+}
+
+TEST_F(CUDA, CONVOLUTION_BACKWARD_FILTER_CUDNN) {
+    if (cuda::is_compute_capability_required(7, 0))
+        return;
+    using namespace convolution;
+    Checker<ConvolutionBackwardFilter> checker(handle_cuda());
+    checker.set_before_exec_callback(AlgoChecker<ConvolutionBackwardFilter>(
+            "CUDNN_CONVOLUTION"));
+    //! noncontiguous case
+    {
+        param::Convolution param;
+        param.pad_h = param.pad_w = 1;
+        checker.set_param(param).execl(TensorLayoutArray{
+                {{2, 16, 7, 7}, {1568, 49, 7, 1}, dtype::Float32()},
+                {{2, 16, 7, 7}, {1568, 49, 7, 1}, dtype::Float32()},
+                {{16, 16, 3, 3}, {144, 9, 3, 1}, dtype::Float32()}
+        });
     }
 }
 

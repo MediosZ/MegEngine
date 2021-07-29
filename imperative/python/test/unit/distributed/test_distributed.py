@@ -16,11 +16,8 @@ import pytest
 import megengine as mge
 import megengine.distributed as dist
 from megengine.core.ops.builtin import CollectiveComm, ParamPackConcat, ParamPackSplit
-from megengine.distributed.helper import (
-    get_device_count_by_fork,
-    param_pack_concat,
-    param_pack_split,
-)
+from megengine.device import get_default_device
+from megengine.distributed.helper import param_pack_concat, param_pack_split
 
 
 def _assert_q_empty(q):
@@ -87,7 +84,8 @@ def test_new_group():
             assert group.size == 2
             assert group.key == "2,0"
             assert group.rank == ranks.index(rank)
-            assert group.comp_node == "gpu{}:2".format(rank)
+            dt = get_default_device()[:-1]
+            assert group.comp_node == "{}{}:2".format(dt, rank)
 
     worker()
 
@@ -199,13 +197,14 @@ def test_param_pack_concat():
 
 @pytest.mark.require_ngpu(2)
 @pytest.mark.parametrize("early_return", [False, True], ids=["common", "early_return"])
+@pytest.mark.parametrize("output_size", [10, 10000], ids=["small_size", "large_size"])
 @pytest.mark.isolated_distributed
-def test_collect_results(early_return):
+def test_collect_results(early_return, output_size):
     @dist.launcher
     def worker():
         if early_return:
             exit(0)
-        return (dist.get_rank(), dist.get_world_size())
+        return [dist.get_rank()] * output_size
 
     results = worker()
     world_size = len(results)
@@ -213,6 +212,20 @@ def test_collect_results(early_return):
     expects = (
         [None] * world_size
         if early_return
-        else [(dev, world_size) for dev in range(world_size)]
+        else [[dev] * output_size for dev in range(world_size)]
     )
     assert results == expects
+
+
+@pytest.mark.require_ngpu(2)
+@pytest.mark.isolated_distributed
+def test_user_set_pop():
+    @dist.launcher
+    def worker():
+        # set in race condition
+        dist.get_client().user_set("foo", 1)
+        if dist.get_rank() == 1:
+            ret = dist.get_client().user_pop("foo")
+            assert ret == 1
+
+    worker()

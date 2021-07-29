@@ -511,6 +511,12 @@ protected:
             const TensorLayout& bias, const TensorLayout& z,
             const TensorLayout& dst, size_t workspace_in_bytes,
             const PreprocessedFilter* preprocessed_filter);
+
+    CanonizedFilterMeta check_exec_allow_noncontiguous(
+            const TensorLayout& src, const TensorLayout& filter,
+            const TensorLayout& bias, const TensorLayout& z,
+            const TensorLayout& dst, size_t workspace_in_bytes,
+            const PreprocessedFilter* preprocessed_filter);
 };
 using ConvBias = ConvBiasForward;
 
@@ -660,7 +666,7 @@ public:
      * http://deeplearning.net/software/theano/library/tensor/nnet/neighbours.html
      *
      * \f$ dst_{n, c, oh, ow, wh, ww} = src_{n, c, ih+wh, iw+fw}\f$,
-     * where \f$ ih=-pad_h+oh*stride_h, iw=-pad_w+ow*stride_w\f$.
+     * where \f$ ih=-pad_h+oh*stride_h+(wh-1)*(dilation_h-1), iw=-pad_w+ow*stride_w+(ww-1)*(dilation_w-1)\f$.
      */
     virtual void exec(_megdnn_tensor_in src, _megdnn_tensor_out dst,
                       _megdnn_workspace workspace) = 0;
@@ -692,6 +698,53 @@ protected:
                     size_t workspace_in_bytes);
 };
 
+class SlidingWindowTransposeBase : public OperatorBase {
+    DEF_OPR_IMPL_CTOR(SlidingWindowTransposeBase, OperatorBase);
+    DEF_OPR_PARAM(SlidingWindowTranspose);
+
+protected:
+    void deduce_layout_fwd(const TensorLayout& src, TensorLayout& dst);
+    void check_layout_fwd(const TensorLayout& filter, const TensorLayout& dst);
+};
+
+class SlidingWindowTransposeForward : public SlidingWindowTransposeBase {
+    DEF_OPR_IMPL(SlidingWindowTransposeForward, SlidingWindowTransposeBase, 1, 1);
+
+public:
+    /**
+     * \param[in] src (N, C, IH, IW, window_h, window_w)
+     * \param[out] dst (N, C, OH, OW)
+     */
+    virtual void exec(_megdnn_tensor_in src, _megdnn_tensor_out dst,
+                      _megdnn_workspace workspace) = 0;
+    virtual size_t get_workspace_in_bytes(const TensorLayout& src,
+                                          const TensorLayout& dst) = 0;
+    void deduce_layout(const TensorLayout& src, TensorLayout& dst);
+
+protected:
+    void check_exec(const TensorLayout& src, const TensorLayout& dst,
+                    size_t workspace_in_bytes);
+};
+using SlidingWindowTranspose = SlidingWindowTransposeForward;
+
+class SlidingWindowTransposeBackward : public SlidingWindowTransposeBase {
+    DEF_OPR_IMPL(SlidingWindowTransposeBackward, SlidingWindowTransposeBase, 1, 1);
+
+public:
+    /**
+     * \param[in] diff the backpropagated gradient wrt. dst
+     * \param[out] grad the backpropagated gradient wrt. src
+     */
+    virtual void exec(_megdnn_tensor_in diff, _megdnn_tensor_out grad,
+                      _megdnn_workspace workspace) = 0;
+    virtual size_t get_workspace_in_bytes(const TensorLayout& diff,
+                                          const TensorLayout& grad) = 0;
+
+protected:
+    void check_exec(const TensorLayout& diff, const TensorLayout& grad,
+                    size_t workspace_in_bytes);
+};
+
 /**
  * \brief base class for Pooling
  */
@@ -707,7 +760,8 @@ protected:
     void check_layout_fwd(const TensorLayout& src, const TensorLayout& dst);
 };
 
-class PoolingForward : public PoolingBase {
+class PoolingForward : public PoolingBase,
+                       public detail::MultiAlgoOpr<PoolingForward, 2> {
     DEF_OPR_IMPL(PoolingForward, PoolingBase, 1, 1);
 
 public:
@@ -728,7 +782,8 @@ protected:
 
 using Pooling = PoolingForward;
 
-class PoolingBackward : public PoolingBase {
+class PoolingBackward : public PoolingBase,
+                        public detail::MultiAlgoOpr<PoolingBackward, 4> {
     DEF_OPR_IMPL(PoolingBackward, PoolingBase, 3, 1);
 
 public:
@@ -1730,6 +1785,67 @@ public:
 protected:
     void check_exec(const TensorLayout& diff, const TensorLayout& input,
                     const TensorLayout& scale, const TensorLayout& grad_x,
+                    const TensorLayout& grad_s, size_t workspace_in_bytes);
+};
+
+class LSQBase : public OperatorBase {
+    DEF_OPR_IMPL_CTOR(LSQBase, OperatorBase);
+    DEF_OPR_PARAM(LSQ);
+
+protected:
+    void deduce_layout_fwd(const TensorLayout& input, TensorLayout& output);
+    void check_layout_fwd(const TensorLayout& input, const TensorLayout& scale,
+                          const TensorLayout& zero_point,
+                          const TensorLayout& grad_scale,
+                          const TensorLayout& output);
+};
+
+class LSQForward : public LSQBase {
+    DEF_OPR_IMPL(LSQForward, LSQBase, 4, 1);
+
+public:
+    virtual void exec(_megdnn_tensor_in input, _megdnn_tensor_in scale,
+                      _megdnn_tensor_in zero_point,
+                      _megdnn_tensor_in grad_scale, _megdnn_tensor_out output,
+                      _megdnn_workspace workspace) = 0;
+    void deduce_layout(const TensorLayout& input, const TensorLayout& scale,
+                       const TensorLayout& zero_point,
+                       const TensorLayout& grad_scale, TensorLayout& output);
+    virtual size_t get_workspace_in_bytes(const TensorLayout& input,
+                                          const TensorLayout& scale,
+                                          const TensorLayout& zero_point,
+                                          const TensorLayout& grad_scale,
+                                          const TensorLayout& output) = 0;
+
+protected:
+    void check_exec(const TensorLayout& input, const TensorLayout& scale,
+                    const TensorLayout& zero_point,
+                    const TensorLayout& grad_scale, const TensorLayout& output,
+                    size_t workspace_in_bytes);
+};
+using LSQ = LSQForward;
+
+class LSQBackward : public LSQBase {
+    DEF_OPR_IMPL(LSQBackward, LSQBase, 5, 2);
+
+public:
+    virtual void exec(_megdnn_tensor_in diff, _megdnn_tensor_in input,
+                      _megdnn_tensor_in scale, _megdnn_tensor_in zero_point,
+                      _megdnn_tensor_in grad_scale, _megdnn_tensor_out grad_x,
+                      _megdnn_tensor_out grad_s,
+                      _megdnn_workspace workspace) = 0;
+    virtual size_t get_workspace_in_bytes(const TensorLayout& diff,
+                                          const TensorLayout& input,
+                                          const TensorLayout& scale,
+                                          const TensorLayout& zero_point,
+                                          const TensorLayout& grad_scale,
+                                          const TensorLayout& grad_x,
+                                          const TensorLayout& grad_s) = 0;
+
+protected:
+    void check_exec(const TensorLayout& diff, const TensorLayout& input,
+                    const TensorLayout& scale, const TensorLayout& zero_point,
+                    const TensorLayout& grad_scale, const TensorLayout& grad_x,
                     const TensorLayout& grad_s, size_t workspace_in_bytes);
 };
 

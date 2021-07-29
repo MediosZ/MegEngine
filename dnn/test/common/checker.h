@@ -6,7 +6,8 @@
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or
+ * implied.
  */
 
 #pragma once
@@ -75,7 +76,10 @@ protected:
     ExtraOprImpl m_extra_opr_impl;
     OutputCanonizer m_output_canonizer;
     TensorsConstriant m_tensor_constraint;
-    bool no_naive_and_check = false;
+    bool m_no_naive_and_check = false;
+    bool m_stable_check = false;
+    bool m_force_deduce_dst = true;
+    bool m_allow_invalid_check = false;
     /**
      * the offset from the start of malloc memory
      *
@@ -86,6 +90,7 @@ protected:
     size_t m_offset = 0;
 
     CheckerHelper(Handle* handle, bool check_dispatch = true);
+
     ~CheckerHelper() noexcept;
 
     using OprExec = std::function<void(const TensorValueArray&)>;
@@ -100,14 +105,15 @@ protected:
 
     void enable_contig_naive() { m_enable_contig_naive = true; }
 
-private:
-    std::shared_ptr<TensorValueArray> m_tensors_naive;
-
-    void init_naive_values();
     void copy_tensors_to_device(const TensorValueArray& dest,
                                 const TensorValueArray& src);
     void copy_tensors_from_device(const TensorValueArray& dest,
                                   const TensorValueArray& src);
+
+private:
+    std::shared_ptr<TensorValueArray> m_tensors_naive;
+
+    void init_naive_values();
     void check_tensors(const TensorValueArray& expected,
                        const TensorValueArray& computed);
 };
@@ -126,9 +132,10 @@ public:
         for (size_t i = 0; i < shapes.size(); ++i) {
             DType dt = (m_dtype.find(i) != m_dtype.end() ? m_dtype[i]
                                                          : dtype::Float32());
-            TensorFormat fmt =
-                    (m_fmt.find(i) != m_fmt.end() ? m_fmt[i] : TensorFormat{});
-            layouts[i] = TensorLayout(shapes[i], dt, fmt);
+            if (m_fmt.find(i) == m_fmt.end()) {
+                layouts[i] = TensorLayout(shapes[i], dt);
+            } else
+                layouts[i] = TensorLayout(shapes[i], dt, m_fmt[i]);
         }
         return layouts;
     }
@@ -225,6 +232,28 @@ public:
         return *this;
     }
 
+    //! stable check will run many iter and compare result with first iter
+    Checker& set_stable_check(bool stable_check) {
+        m_stable_check = stable_check;
+        return *this;
+    }
+
+    //! froce deduce dst
+    Checker& set_force_deduce_dst(bool force_deduce_dst) {
+        m_force_deduce_dst = force_deduce_dst;
+        return *this;
+    }
+
+    Checker& set_no_naive_check(bool no_naive_and_check) {
+        m_no_naive_and_check = no_naive_and_check;
+        return *this;
+    }
+
+    Checker& set_allow_invalid_check(bool allow_invalid_check) {
+        m_allow_invalid_check = allow_invalid_check;
+        return *this;
+    }
+
     //! load input tensors from file for next run
     Checker& load_input_tensors(const char* fpath) {
         m_input_tensors_fpath = fpath;
@@ -306,12 +335,23 @@ private:
         const char* expr0, const char* expr1, const char* expr_maxerr,
         const char* expr_maxerr_avg, const char* expr_maxerr_avg_biased,
         const TensorND& v0, const TensorND& v1, float maxerr, float maxerr_avg,
+        float maxerr_avg_biased, bool allow_invalid = false);
+
+::testing::AssertionResult __assert_tensor_eq_allow_invalid(
+        const char* expr0, const char* expr1, const char* expr_maxerr,
+        const char* expr_maxerr_avg, const char* expr_maxerr_avg_biased,
+        const TensorND& v0, const TensorND& v1, float maxerr, float maxerr_avg,
         float maxerr_avg_biased);
 
 #define MEGDNN_ASSERT_TENSOR_EQ_EPS_AVG(v0, v1, maxerr, maxerr_avg,         \
                                         maxerr_avg_biased)                  \
     ASSERT_PRED_FORMAT5(::megdnn::test::__assert_tensor_eq, v0, v1, maxerr, \
                         maxerr_avg, maxerr_avg_biased)
+
+#define MEGDNN_ASSERT_TENSOR_EQ_EPS_AVG_ALLOW_INVALID(                        \
+        v0, v1, maxerr, maxerr_avg, maxerr_avg_biased)                        \
+    ASSERT_PRED_FORMAT5(::megdnn::test::__assert_tensor_eq_allow_invalid, v0, \
+                        v1, maxerr, maxerr_avg, maxerr_avg_biased)
 
 #define MEGDNN_ASSERT_TENSOR_EQ_EPS(v0, v1, maxerr) \
     MEGDNN_ASSERT_TENSOR_EQ_EPS_AVG(v0, v1, maxerr, maxerr, maxerr)
@@ -327,7 +367,10 @@ void Checker<Opr, Proxy>::exec(TensorLayoutArray layouts) {
     auto opr_cur = this->opr();
     opr_naive->param() = m_param;
     opr_cur->param() = m_param;
-    m_naive_proxy.deduce_layout(opr_naive.get(), layouts);
+    bool deduce_layout = layouts.back().ndim == 0;
+    if (deduce_layout || m_force_deduce_dst) {
+        m_naive_proxy.deduce_layout(opr_naive.get(), layouts);
+    }
     auto exec_naive = [this, &opr_naive, &layouts,
                        &opr_relayout](const TensorValueArray& values) {
         TensorValueArray contig_values = values;
@@ -415,12 +458,27 @@ TensorND TensorValueLowbit4(const TensorShape& shape, T dtype,
     tensor.raw_ptr =
             static_cast<dt_byte*>(malloc(tensor.layout.span().dist_byte()));
     megdnn_assert(values.size() == tensor.layout.total_nr_elems());
-    auto ptr = static_cast<U*>(tensor.raw_ptr);
-    for (size_t i = 0; i < values.size(); i += 2) {
-        U val0 = values[i], val1 = values[i + 1];
-        megdnn_assert(val0 >= DTypeTrait<T>::min());
-        megdnn_assert(val1 <= DTypeTrait<T>::max());
-        ptr[i / 2] = (val0 & 0xF) | (val1 << 4);
+    auto ptr = tensor.ptr<typename DTypeTrait<T>::ctype>();
+    auto layout = tensor.layout;
+    auto dim_in = shape[layout.ndim - 1];
+    auto elems = tensor.layout.total_nr_elems();
+    auto dim_out = elems / dim_in;
+    auto stride_out = div_ceil(dim_in, 2_z);
+    size_t in_offset = 0;
+    for (size_t i = 0; i < dim_out; ++i) {
+        for (size_t j = 0; j < dim_in; j += 2) {
+            U a = values[in_offset + j];
+            U b = 0;
+            if (j + 1 < dim_in)
+                b = values[in_offset + j + 1];
+            megdnn_assert(a >= DTypeTrait<T>::min());
+            megdnn_assert(a <= DTypeTrait<T>::max());
+            megdnn_assert(b >= DTypeTrait<T>::min());
+            megdnn_assert(b <= DTypeTrait<T>::max());
+            ptr[j / 2] = (a & 0xF) | (b << 4);
+        }
+        in_offset += dim_in;
+        ptr += stride_out;
     }
     return tensor;
 }
@@ -462,7 +520,6 @@ struct ExecutionPolicyAlgoName {
 template <class Opr, typename OprAlgoProxy = OprAlgoProxy<Opr>>
 class AlgoChecker {
 public:
-
     AlgoChecker(ExecutionPolicyAlgoName name, bool* require_algo = nullptr)
             : m_policy_name{name}, m_require_algo{require_algo} {}
 
@@ -550,7 +607,8 @@ void construct_sub_execution_policy_heuristic(ExecutionPolicy& policy,
     opr->param() = Algorithm::deserialize_read_pod<typename Opr::Param>(param);
     if (!policy.algo.valid()) {
         policy.algo = AlgoProxy<Opr, OprTrait<Opr>::arity>::
-                get_algorithm_info_heuristic(opr.get(), layouts).desc;
+                              get_algorithm_info_heuristic(opr.get(), layouts)
+                                      .desc;
     }
 
     Algorithm* algo = opr->get_algorithm_from_desc(policy.algo);
@@ -559,8 +617,7 @@ void construct_sub_execution_policy_heuristic(ExecutionPolicy& policy,
     FOREACH_OPR_TYPE_DISPATCH(sub_items, {
         policy.sub_policy.push_back(ExecutionPolicy{});
         construct_sub_execution_policy_heuristic<_Opr>(
-                policy.sub_policy.back(), _item.layouts, _item.param,
-                handle);
+                policy.sub_policy.back(), _item.layouts, _item.param, handle);
     });
 }
 

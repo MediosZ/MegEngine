@@ -259,6 +259,10 @@ void Elemwise::perform(
             mgb_assert(t.comp_node() == out_cn);
             mgb_assert(t.dtype() == out_dt);
         }
+        if (t.shape().is_empty()) {
+            mgb_assert(dest.empty());
+            return;
+        }
         inp_shapes[i] = t.shape();
     }
     if (!opr) {
@@ -343,24 +347,24 @@ void Elemwise::mem_plan_fwd_in2out_writable() {
 }
 
 void Elemwise::scn_do_execute() {
-    auto &&inp = input();
-    megdnn::TensorNDArray megdnn_inp;
-    mgb_assert(megdnn_inp.capacity() >= inp.size(),
-            "heap allocation in elemwise exec");
-    megdnn_inp.resize(inp.size());
-    for (size_t i = 0; i < inp.size(); ++ i) {
+    auto&& inp = input();
+    megdnn::TensorNDArray dnn_inp;
+    mgb_assert(dnn_inp.capacity() >= inp.size(),
+               "heap allocation in elemwise exec");
+    dnn_inp.resize(inp.size());
+    for (size_t i = 0; i < inp.size(); ++i) {
         if (inp[i]->dev_tensor().empty()) {
             mgb_assert(output(0)->dev_tensor().empty());
             return;
         }
-        megdnn_inp[i] = (inp[i]->dev_tensor().as_megdnn());
+        dnn_inp[i] = (inp[i]->dev_tensor().as_megdnn());
     }
     mgb_assert(!output(0)->dev_tensor().empty());
 
     megdnn_opr()->param() = param();
-    call_megdnn_opr_exec(
-            comp_node(), megdnn_inp, output(0)->dev_tensor().as_megdnn(),
-            megdnn_opr(), this);
+    call_megdnn_opr_exec(comp_node(), dnn_inp,
+                         output(0)->dev_tensor().as_megdnn(), megdnn_opr(),
+                         this);
 }
 
 void Elemwise::init_output_static_infer_desc() {
@@ -609,6 +613,10 @@ MGB_IMPL_OPR_GRAD(Elemwise) {
             RET(EL2(H_SWISH_GRAD, (i0 + i1), og));
         case Mode::NOT:
             return nullptr;
+        case Mode::SILU:
+            RET(EL2(SILU_GRAD, i0, og));
+        case Mode::GELU:
+            RET(EL2(GELU_GRAD, i0, og));
 
         // binary
         case Mode::ABS_GRAD:
@@ -776,6 +784,10 @@ void TypeCvt::perform(DeviceTensorND &dest,
         intl::UniqPtrWithCN<megdnn::TypeCvt> &opr) {
     mgb_assert(src.comp_node() == opr.comp_node());
     mgb_assert(dest_type.valid());
+    if (src.empty()) {
+        mgb_assert(dest.empty());
+        return;
+    }
     if (src.dtype() == dest_type) {
         dest.copy_from(src);
         return;
@@ -814,8 +826,13 @@ MGB_IMPL_OPR_GRAD(TypeCvt) {
 #endif
 
 void TypeCvt::mem_plan_fwd_in2out_writable() {
-    if (input(0)->dtype().size() == output(0)->dtype().size() &&
-            input(0)->layout().is_contiguous()) {
+    bool cond_low_bit =
+            input(0)->dtype().is_low_bit() && output(0)->dtype().is_low_bit() &&
+            input(0)->dtype().low_bit() == output(0)->dtype().low_bit();
+    bool cond_normal = !input(0)->dtype().is_low_bit() &&
+                       !output(0)->dtype().is_low_bit() &&
+                       input(0)->dtype().size() == output(0)->dtype().size();
+    if ((cond_low_bit || cond_normal) && input(0)->layout().is_contiguous()) {
         output(0)->set_fwd_in2out_writable(input(0));
     }
 }
@@ -1734,7 +1751,13 @@ void Reduce::record_execute_deps(ExecDependencyArray& deps) {
 
 MGB_DYN_TYPE_OBJ_FINAL_IMPL(PowC);
 
-MEGDNN_OPR_CTOR_INIT1(PowC, ssprintf("powc_%g", param.exp))
+PowC::PowC(VarNode *i0, const Param &param, const OperatorNodeConfig &config)
+        : Super(OperatorNodeBaseCtorParam{ i0->owner_graph(), config, ssprintf("powc_%g", param.exp), {i0}} ) {
+    init_megdnn_opr(*this, param);
+    add_input({i0});
+    output(0)->add_flag(VarNode::Flag::ALLOW_EMPTY_SHAPE);
+    intl::MegDNNOprInitPostCtor<PowC>::apply(*this);
+}
 
 SymbolVar PowC::make(SymbolVar x, const Param& param,
                      const OperatorNodeConfig& config) {
@@ -1771,6 +1794,22 @@ void PowC::init_output_static_infer_desc() {
     owner_graph()->static_infer_manager().register_value_infer(
             output(0),
             {SourceType::DEP, {{input(0), DepType::VALUE}}, infer_value});
+}
+
+void PowC::scn_do_execute() {
+    if (input(0)->dev_tensor().empty()) {
+        mgb_assert(output(0)->dev_tensor().empty());
+        return;
+    }
+    mgb_assert(!output(0)->dev_tensor().empty());
+    Super::scn_do_execute();
+}
+
+PowC::NodeProp* PowC::do_make_node_prop() const {
+    auto ret = Super::do_make_node_prop();
+    ret->add_dep_type_existing_var(input(0),
+                                   NodeProp::DepType::VALUE_ALLOW_EMPTY);
+    return ret;
 }
 
 #if MGB_ENABLE_GRAD

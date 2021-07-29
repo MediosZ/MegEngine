@@ -11,7 +11,7 @@
  */
 #include "megdnn/dtype.h"
 #include "megdnn/oprs.h"
-#include "test/common/benchmarker.h"
+#include "test/cuda/benchmark.h"
 #include "test/common/checker.h"
 #include "test/common/rng.h"
 #include "test/cuda/fixture.h"
@@ -237,6 +237,179 @@ TEST_F(CUDA, RELAYOUT_FORMAT_NCHW_NCHW4_IC_SMALL) {
             .execs({{8, 3, 768, 1280}, {}});
 }
 
+TEST_F(CUDA, RELAYOUT_FORMAT_NCHW_NCHW64) {
+    Checker<RelayoutFormat> checker(handle_cuda());
+    UniformIntRNG s4{-8, 7};
+    UniformIntRNG u4{0, 15};
+    param::RelayoutFormat param;
+    param.mode = param::RelayoutFormat::Mode::NCHW_NCHW64;
+    for (size_t n : {1, 3}) {
+        for (size_t c : {15, 64, 128}) {
+            for (size_t h : {7, 14, 16, 28}) {
+                for (size_t w : {2, 3, 7, 8, 16, 31}) {
+                    checker.set_dtype(0, dtype::QuantizedS4{2.f})
+                            .set_dtype(1, dtype::QuantizedS4{2.f})
+                            .set_rng(0, &s4)
+                            .set_param(param)
+                            .execs({{n, c, h, w}, {}});
+
+                    checker.set_dtype(0, dtype::Quantized4Asymm{1.2f, 8})
+                            .set_dtype(1, dtype::Quantized4Asymm{1.2f, 4})
+                            .set_rng(0, &u4)
+                            .set_param(param)
+                            .execs({{n, c, h, w}, {}});
+ 
+                    checker.set_dtype(0, dtype::QuantizedS4{1.19990307f})
+                            .set_dtype(1, dtype::QuantizedS4{1.f})
+                            .set_rng(0, &s4)
+                            .set_param(param)
+                            .execs({{n, c, h, w}, {}});
+               
+                    checker.set_dtype(0, dtype::Quantized4Asymm{1.19990307f, 8})
+                            .set_dtype(1, dtype::Quantized4Asymm{1.f, 4})
+                            .set_rng(0, &u4)
+                            .set_param(param)
+                            .set_epsilon(1e-3)
+                            .execs({{n, c, h, w}, {}});
+                }
+            }
+        }
+    }
+}
+
+TEST_F(CUDA, RELAYOUT_FORMAT_NCHW64_NCHW) {
+    Checker<RelayoutFormat> checker(handle_cuda());
+    UniformIntRNG s4{-8, 7};
+    UniformIntRNG u4{0, 15};
+    param::RelayoutFormat param;
+    param.mode = param::RelayoutFormat::Mode::NCHW64_NCHW;
+    for (size_t n : {1, 3}) {
+        for (size_t c : {15, 64, 128}) {
+            for (size_t h : {7, 14, 16, 28}) {
+                for (size_t w : {2, 3, 4, 7, 14, 16, 17}) {
+                    if (c % 64 != 0) {
+                        param.oc = c;
+                    } else {
+                        param.oc = 0;
+                    }
+                    checker.set_dtype(0, dtype::QuantizedS4{2.f})
+                            .set_dtype(1, dtype::QuantizedS4{2.f})
+                            .set_rng(0, &s4)
+                            .set_param(param)
+                            .set_epsilon(1e-3)
+                            .execs({{n, (c + 63) / 64, h, w, 64}, {}});
+
+                    checker.set_dtype(0, dtype::Quantized4Asymm{1.2f, 4})
+                            .set_dtype(1, dtype::Quantized4Asymm{1.2f, 8})
+                            .set_rng(0, &u4)
+                            .set_param(param)
+                            .set_epsilon(1e-3)
+                            .execs({{n, (c + 63) / 64, h, w, 64}, {}});
+
+                    checker.set_dtype(0, dtype::QuantizedS4{1.19990307f})
+                            .set_dtype(1, dtype::QuantizedS4{1.f})
+                            .set_rng(0, &s4)
+                            .set_param(param)
+                            .set_epsilon(1e-3)
+                            .execs({{n, (c + 63) / 64, h, w, 64}, {}});
+
+                    checker.set_dtype(0, dtype::Quantized4Asymm{1.20211209f, 8})
+                            .set_dtype(1, dtype::Quantized4Asymm{1.f, 4})
+                            .set_rng(0, &u4)
+                            .set_param(param)
+                            .set_epsilon(1e-3)
+                            .execs({{n, (c + 63) / 64, h, w, 64}, {}});
+                }
+            }
+        }
+    }
+}
+
+TEST_F(CUDA, RELAYOUT_FORMAT_NCHW_NHWC) {
+    Checker<RelayoutFormat> checker(handle_cuda());
+    UniformIntRNG s4{-8, 7};
+    UniformIntRNG u4{0, 15};
+    param::RelayoutFormat param;
+    param.mode = param::RelayoutFormat::Mode::NCHW_NHWC;
+    for (size_t n : {1, 3}) {
+        for (size_t c : {8, 16}) {
+            for (size_t h : {7, 14, 16, 28}) {
+                for (size_t w : {2, 3, 7, 8, 16, 31}) {
+                    checker.set_dtype(0, dtype::QuantizedS4{2.f})
+                            .set_dtype(1, dtype::QuantizedS4{2.f})
+                            .set_rng(0, &s4)
+                            .set_param(param)
+                            .execs({{n, c, h, w}, {}});
+
+                    checker.set_dtype(0, dtype::Quantized4Asymm{1.2f, 8})
+                            .set_dtype(1, dtype::Quantized4Asymm{1.2f, 4})
+                            .set_rng(0, &u4)
+                            .set_param(param)
+                            .execs({{n, c, h, w}, {}});
+ 
+                    checker.set_dtype(0, dtype::QuantizedS4{1.19990307f})
+                            .set_dtype(1, dtype::QuantizedS4{1.f})
+                            .set_rng(0, &s4)
+                            .set_param(param)
+                            .execs({{n, c, h, w}, {}});
+               
+                    checker.set_dtype(0, dtype::Quantized4Asymm{1.19990307f, 8})
+                            .set_dtype(1, dtype::Quantized4Asymm{1.f, 4})
+                            .set_rng(0, &u4)
+                            .set_param(param)
+                            .set_epsilon(1e-3)
+                            .execs({{n, c, h, w}, {}});
+                }
+            }
+        }
+    }
+    checker.execs({{1, 256, 384, 640}, {}});
+}
+
+TEST_F(CUDA, RELAYOUT_FORMAT_NHWC_NCHW) {
+    Checker<RelayoutFormat> checker(handle_cuda());
+    UniformIntRNG s4{-8, 7};
+    UniformIntRNG u4{0, 15};
+    param::RelayoutFormat param;
+    param.mode = param::RelayoutFormat::Mode::NHWC_NCHW;
+    for (size_t n : {1, 3}) {
+        for (size_t c : {8, 16}) {
+            for (size_t h : {7, 14, 16, 28}) {
+                for (size_t w : {2, 3, 4, 7, 14, 16, 17}) {
+                    checker.set_dtype(0, dtype::QuantizedS4{2.f})
+                            .set_dtype(1, dtype::QuantizedS4{2.f})
+                            .set_rng(0, &s4)
+                            .set_param(param)
+                            .set_epsilon(1e-3)
+                            .execs({{n, h, w, c}, {}});
+
+                    checker.set_dtype(0, dtype::Quantized4Asymm{1.2f, 4})
+                            .set_dtype(1, dtype::Quantized4Asymm{1.2f, 8})
+                            .set_rng(0, &u4)
+                            .set_param(param)
+                            .set_epsilon(1e-3)
+                            .execs({{n, h, w, c}, {}});
+
+                    checker.set_dtype(0, dtype::QuantizedS4{1.19990307f})
+                            .set_dtype(1, dtype::QuantizedS4{1.f})
+                            .set_rng(0, &s4)
+                            .set_param(param)
+                            .set_epsilon(1e-3)
+                            .execs({{n, h, w, c}, {}});
+
+                    checker.set_dtype(0, dtype::Quantized4Asymm{1.20211209f, 8})
+                            .set_dtype(1, dtype::Quantized4Asymm{1.f, 4})
+                            .set_rng(0, &u4)
+                            .set_param(param)
+                            .set_epsilon(1e-3)
+                            .execs({{n, h, w, c}, {}});
+                }
+            }
+        }
+    }
+    checker.execs({{1, 384, 640, 256}, {}});
+}
+
 #if MEGDNN_WITH_BENCHMARK
 TEST_F(CUDA, BENCHMARK_RELAYOUT_FORMAT) {
     using Param = RelayoutFormat::Param;
@@ -283,6 +456,78 @@ TEST_F(CUDA, BENCHMARK_RELAYOUT_FORMAT) {
         run(shapes, param, default_param);
     }
 }
+
+TEST_F(CUDA, BENCHMARK_RELAYOUT_FORMAT_QS4) {
+    using Param = RelayoutFormat::Param;
+
+    auto run = [&](const TensorShapeArray& shapes, Param param) {
+        CUBenchmarker<RelayoutFormat> benchmarker(handle_cuda());
+        benchmarker.set_param(param);
+        benchmarker.set_dtype(0, dtype::QuantizedS4{1.19990307f})
+                .set_dtype(1, dtype::QuantizedS4{1.19990307f});
+
+        for (auto&& shape : shapes) {
+            double memaccess =
+                    double(TensorLayout(shape, dtype::QuantizedS4{1.f})
+                                   .span()
+                                   .dist_byte()) *
+                    2e-6;
+            auto time_ms = benchmarker.execs({shape, {}});
+            printf("execute %s, time %.4f ms, %.4f GB/s\n",
+                   shape.to_string().c_str(), time_ms, memaccess / time_ms);
+        }
+    };
+
+    printf("nchw -> nchw64\n");
+    {
+        TensorShapeArray shapes = {
+                {1, 64, 56, 56},   {16, 64, 56, 56}, {64, 64, 56, 56},
+                {1, 64, 56, 55},   {16, 64, 56, 55}, {64, 64, 56, 55},
+                {1, 256, 384, 640},
+        };
+        Param param;
+        param.mode = param::RelayoutFormat::Mode::NCHW_NCHW64;
+        run(shapes, param);
+    }
+    printf("nchw -> nhwc\n");
+    {
+        TensorShapeArray shapes = {
+                {1, 64, 56, 56},   {16, 64, 56, 56}, {64, 64, 56, 56},
+                {1, 64, 56, 55},   {16, 64, 56, 55}, {64, 64, 56, 55},
+                {1, 256, 384, 640}, {16, 16, 384, 640}, 
+        };
+        Param param;
+        param.mode = param::RelayoutFormat::Mode::NCHW_NHWC;
+        run(shapes, param);
+    }
+    printf("nchw64 -> nchw\n");
+    {
+        TensorShapeArray shapes = {
+                {64, 1, 56, 56, 64},
+                {1, 32, 7, 7, 64},
+                {16, 32, 7, 7, 64},
+                {64, 32, 7, 7, 64}, 
+                {1, 4, 384, 640, 64}, 
+        };
+        Param param;
+        param.mode = param::RelayoutFormat::Mode::NCHW64_NCHW;
+        run(shapes, param);
+    }
+    printf("nhwc -> nchw\n");
+    {
+        TensorShapeArray shapes = {
+                {64, 56, 56, 64},
+                {1, 7, 7, 64*32},
+                {16, 7, 7, 64*32},
+                {64, 7, 7, 64*32}, 
+                {1, 384, 640, 64*4}, 
+        };
+        Param param;
+        param.mode = param::RelayoutFormat::Mode::NHWC_NCHW;
+        run(shapes, param);
+    }
+}
+
 #endif
 
 TEST_F(CUDA, RELAYOUT_FORMAT_NCHW4) {

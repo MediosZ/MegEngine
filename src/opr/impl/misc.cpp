@@ -224,6 +224,7 @@ void NvOf::scn_do_execute() {
 void NvOf::init_output_static_infer_desc() {
     using namespace cg::static_infer;
     auto infer_shape = [](TensorShape& dest, const InpVal& iv) {
+        auto out_grid_size = NV_OF_OUTPUT_VECTOR_GRID_SIZE_4;
         auto ishp = iv.val.at(0).shape();
         //! nvof input format: nthwc4
         mgb_assert(ishp.ndim == 5);
@@ -232,8 +233,8 @@ void NvOf::init_output_static_infer_desc() {
         SmallVector<size_t> tv;
         tv.push_back(ishp[0]);
         tv.push_back(ishp[1] - 1);
-        tv.push_back(ishp[2] / 4);
-        tv.push_back(ishp[3] / 4);
+        tv.push_back((ishp[2] + out_grid_size - 1) / out_grid_size);
+        tv.push_back((ishp[3] + out_grid_size - 1) / out_grid_size);
         tv.push_back(ishp[4] / 2);
         dest = tv;
 
@@ -436,4 +437,19 @@ MGB_IMPL_OPR_GRAD(TopK) {
 }
 #endif
 
+/* ================= CheckHasInf =================  */
+namespace mgb {
+namespace opr {
+namespace intl {
+template<>
+struct MegDNNOprInitPostCtor<CheckHasInf> {
+    static void apply(cg::OperatorNodeBase &opr) {
+        opr.output(0)->dtype(dtype::Int32());
+    }
+};
+}
+}
+}
+MGB_DYN_TYPE_OBJ_FINAL_IMPL(CheckHasInf);
+MEGDNN_OPR_INIT1(CheckHasInf, "check_has_inf")
 // vim: syntax=cpp.doxygen foldmethod=marker foldmarker=f{{{,f}}}

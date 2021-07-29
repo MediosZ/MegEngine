@@ -112,6 +112,8 @@ struct GraphCommonOptimizeOptions {
                      ///< tensorcore
         CHWN4,       ///< compute using CHWN4 tensor format, transformed mainly
                      ///< used for cuda
+        NCHW64,      ///< compute using NCHW64 tensor format, used for fast int4
+                     ///< support on Nvidia GPU
     };
     LayoutTransform layout_transform = LayoutTransform::DEFAULT;
 
@@ -154,6 +156,7 @@ struct GraphCommonOptimizeOptions {
     SET(nchw44_dot, NCHW44_DOT);
     SET(nchw32, NCHW32);
     SET(chwn4, CHWN4);
+    SET(nchw64, NCHW64);
 #undef SET
 };
 
@@ -335,6 +338,20 @@ class ComputingGraph : public std::enable_shared_from_this<ComputingGraph>,
                 //! this value indicates JIT level: 1 for basic elemwise opr; 2
                 //! for including reduce oprs
                 uint8_t jit = 0;
+
+                //! jit configurations
+                struct JITConfig {
+                    static const int UNSET = 0;
+                    static const int OFF = 1;
+                    static const int ON = 2;
+
+                    int fuse_dimshuffle = UNSET;
+                    int fuse_reduce = UNSET;
+
+                    bool enabled() const;
+                    void update(const JITConfig& modifier);
+                } jit_config;
+
                 //! whether to enable fine-grained TensorRT opr replace
                 bool tensorrt = false;
             } graph_opt;
@@ -430,6 +447,15 @@ class ComputingGraph : public std::enable_shared_from_this<ComputingGraph>,
                 int num_worker = sys::get_cpu_count() / 2;
             } sublinear_mem_config;
 
+            //! whether to enable DTR memory optimization
+            bool enable_dtr_memory_opt = false;
+
+            //! Control parameter for DTR memory optimization
+            struct DTRConfig {
+                size_t eviction_threshold = 0;
+                size_t evictee_minimum_size = 1ULL << 20;
+            } dtr_config;
+
             //! do not re-profile to select best impl algo when input shape
             //! changes (use previous algo)
             bool no_profiling_on_shape_change = false;
@@ -499,7 +525,28 @@ class ComputingGraph : public std::enable_shared_from_this<ComputingGraph>,
 
             //! contains any user data associated with this graph
             UserDataContainer user_data;
-        }; // Options
+
+            //! Control parameter for fast run
+            struct FastRunConfig {
+                /*!
+                 * the batch size used by fastrun
+                 *
+                 * Non-zero value means that fastrun use this batch size
+                 * regardless of the batch size of the model
+                 *
+                 * Zero means fastrun use batch size of the model
+                 */
+                uint32_t shared_batch_size = 0;
+
+                /*!
+                 * \brief if the content of each input batch is binary equal,
+                 * whether the content of each output batch is promised to be
+                 * equal
+                 */
+                bool binary_equal_between_batch = false;
+            } fast_run_config;
+
+        };  // Options
 
         Options& options() {
             return m_options;

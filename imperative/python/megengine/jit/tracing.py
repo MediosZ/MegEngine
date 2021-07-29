@@ -12,20 +12,18 @@ import functools
 import itertools
 import json
 import os
-import typing
-import weakref
+import pickle
+from typing import Any
 
 import numpy as np
 
-from ..core._imperative_rt import GraphProfiler, common
+from ..core._imperative_rt import GraphProfiler, GraphProfiler2, SerializationMetadata
 from ..core._imperative_rt.core2 import Tensor as RawTensor
 from ..core._imperative_rt.core2 import (
     TensorWeakRef,
     apply,
-    set_compiled,
     set_tracing,
     skip_tracing,
-    unset_compiled,
     unset_tracing,
 )
 from ..core._imperative_rt.ops import (
@@ -35,12 +33,15 @@ from ..core._imperative_rt.ops import (
     RemoteSend,
 )
 from ..core._trace_option import set_symbolic_shape
-from ..core._wrap import device as as_device
-from ..core.ops.builtin import BackwardGraph, OpDef
+from ..core._wrap import as_device
+from ..core.ops.builtin import BatchNorm, OpDef
 from ..core.ops.special import Const
 from ..core.tensor import megbrain_graph as G
 from ..core.tensor.utils import setscalar
 from ..utils.naming import AutoNaming
+from ..utils.profiler import is_profiling
+from .dtr_config import DTRConfig
+from .graph_opt_config import GraphOptimizationConfig
 from .sublinear_memory_config import SublinearMemoryConfig
 
 
@@ -132,6 +133,7 @@ class trace:
         If not None, it enables sublinear memory optimization with given setting.
     :param profiling: whether to profile compiled trace. Default: False
     :param opt_level: optimization level for compiling trace. Default: 2
+    :param graph_opt_config: configuration for graph optimization. Default: None
     :param symbolic_shape: whether to use symbolic shape for tracing. Default: True
     """
 
@@ -146,17 +148,22 @@ class trace:
         symbolic=False,
         capture_as_const=False,
         sublinear_memory_config: SublinearMemoryConfig = None,
+        dtr_config: DTRConfig = None,
         profiling: bool = False,
         opt_level: int = 2,
+        graph_opt_config: GraphOptimizationConfig = None,
         symbolic_shape: bool = True,
     ):
         self.__wrapped__ = function
         self._symbolic = symbolic
         self._capture_as_const = capture_as_const
         self._sublinear_memory_config = sublinear_memory_config
+        self._dtr_config = dtr_config
         self._profiling = profiling
         self._profiler = None
+        self._profiler2 = None
         self._graph_opt_level = opt_level
+        self._graph_opt_config = graph_opt_config
         self._symbolic_shape = symbolic_shape
         self._output_handles = set()
 
@@ -170,9 +177,9 @@ class trace:
         self._graph = None
         self._need_reset_nodes = None
         self._lazy_eval_graph = None
-        self._lazy_eval_tensors = {}
+        self._lazy_eval_tensors = set()
         self._lazy_eval_links = None
-        self._active_tensors = {}
+        self._active_tensors = set()
         self._tensor_remaps = None
         self._inputs_to_restore = None
         self._arg_bindings = None
@@ -258,7 +265,7 @@ class trace:
             y._compiled_info = CompiledTensorProxy(h)
             y._mixin_handle = h
             outputs += [y]
-            self._active_tensors[h] = TensorWeakRef(y)
+            self._active_tensors.add(TensorWeakRef(y))
         self._output_handles.update(ohandles)
         return outputs
 
@@ -272,7 +279,16 @@ class trace:
         # Const op is represented by a str
         assert isinstance(op_, str) and op_ == "Const"
 
-        eq = np.all(np.atleast_1d(value) == self._tinfo[ohandles[0]].bound_data.numpy())
+        expected = self._tinfo[ohandles[0]].bound_data.numpy()
+        shape = value.shape
+        if shape != expected.shape or dtype != expected.dtype:
+            eq = False
+        elif shape == ():
+            eq = expected.item() == value.item()
+        elif shape == (1,):
+            eq = expected[0] == value[0]
+        else:
+            eq = np.all(value == expected)
         if not eq:
             raise TraceMismatchError(
                 "const tensor violated: got a different tensor this time"
@@ -318,9 +334,9 @@ class trace:
             x._mixin_handle = h
             x._recording = True
             x._trace_mixin_info = info
-            self._active_tensors[h] = TensorWeakRef(x)
+            self._active_tensors.add(TensorWeakRef(x))
             if self._symbolic:
-                self._lazy_eval_tensors[h] = TensorWeakRef(x)
+                self._lazy_eval_tensors.add(TensorWeakRef(x))
 
         self._seq.append((op, tuple(ihandles), tuple(ohandles)))
 
@@ -345,7 +361,7 @@ class trace:
         x._recording = True
         x._trace_mixin_info = info
         if self._symbolic:
-            self._lazy_eval_tensors[h] = TensorWeakRef(x)
+            self._lazy_eval_tensors.add(TensorWeakRef(x))
         self._seq.append(("Const", tuple(), tuple(ohandles)))
 
     def _set_active(self, active: bool):
@@ -365,26 +381,24 @@ class trace:
             self._lazy_eval_links = ()
 
     def _take_escaped_tensors(self):
-        escaped_tensors = tuple(
-            filter(lambda x: x() is not None, self._active_tensors.values())
-        )
+        escaped_tensors = tuple(filter(lambda x: x() is not None, self._active_tensors))
         self._active_tensors.clear()
         return escaped_tensors
 
     def _lazy_eval(self, lazy_eval_graph, lazy_eval_tensors, lazy_eval_links):
-        lazy_eval_tensors = list(
-            filter(lambda x: x() is not None, lazy_eval_tensors.values())
-        )
-        readers = [G.OutputNode(x()._varnode).outputs[0] for x in lazy_eval_tensors]
+        lazy_eval_tensors = [x() for x in lazy_eval_tensors]
+        lazy_eval_tensors = [x for x in lazy_eval_tensors if x is not None]
+        readers = [G.OutputNode(x._varnode).outputs[0] for x in lazy_eval_tensors]
         self._apply_graph_options(lazy_eval_graph)
         lazy_eval_graph.options.graph_opt_level = self._graph_opt_level
         lazy_eval_graph._set_priority_to_id([*lazy_eval_links, *readers])
         lazy_eval_graph.compile(*lazy_eval_links, *readers)
-        lazy_eval_graph()
+        self._execute_graph(lazy_eval_graph)
+        lazy_eval_graph.wait()
         for r, x in zip(readers, lazy_eval_tensors):
             # get values from lazy_eval_graph and assign to lazy_eval tensor
-            x()._handle = RawTensor(r.op.get_value())._handle
-            x()._reset_varnode()
+            x._handle = RawTensor(r.op.get_value())._handle
+            x._reset_varnode()
 
     @contextlib.contextmanager
     def _setup(self):
@@ -397,10 +411,9 @@ class trace:
             if self._untraced:
                 self._init_trace(self._symbolic)
             else:
-                set_compiled()
                 if self._graph is None:
                     self._compile()
-                self._graph.execute()
+                self._execute_graph(self._graph)
 
         def do_finalize():
             escaped_tensors = self._take_escaped_tensors()
@@ -445,7 +458,6 @@ class trace:
             self._tensor_remaps = None
             self._set_active(False)
             set_symbolic_shape(self._save_symbolic_shape)
-            unset_compiled()
             unset_tracing()
 
         def do_exit():
@@ -454,13 +466,14 @@ class trace:
                 raise TraceMismatchError("premature end")
             if not self._symbolic or not self._untraced:
                 # reset output tensors
-                for x in self._active_tensors.values():
-                    if x() is not None:
-                        x()._dev_tensor()
-                        x()._reset_varnode()
-                        x()._mixin_handle = -1
-                        x()._recording = False
-                        x()._trace_mixin_info = None
+                for x in self._active_tensors.copy():
+                    strong_x = x()
+                    if strong_x is not None:
+                        strong_x._dev_tensor()
+                        strong_x._reset_varnode()
+                        strong_x._mixin_handle = -1
+                        strong_x._recording = False
+                        strong_x._trace_mixin_info = None
 
         try:
             do_enter()
@@ -482,21 +495,39 @@ class trace:
         if self._untraced:
             # conditionally reading a compiled tensor in excluded region
             # is permitted, so we have to assume every tensor might be read
-            for x in self._active_tensors.values():
-                if x():
-                    info = self._tinfo[x()._mixin_handle]
+            for x in self._active_tensors:
+                strong_x = x()
+                if strong_x:
+                    info = self._tinfo[strong_x._mixin_handle]
                     info.exported = True
                     info.data_read = True
         else:
-            for x in self._active_tensors.values():
-                if x():
-                    x()._dev_tensor()
+            for x in self._active_tensors:
+                strong_x = x()
+                if strong_x:
+                    strong_x._dev_tensor()
 
     def _apply_graph_options(self, graph):
 
         graph.options.no_force_inplace = True
         graph.options.seq_opt.enable_seq_comp_node_opt = False
         graph.options.graph_opt_level = self._graph_opt_level
+        if self._dtr_config is not None:
+            graph.options.enable_dtr_memory_opt = True
+            graph.options.dtr_config.eviction_threshold = (
+                self._dtr_config.eviction_threshold
+            )
+            graph.options.dtr_config.evictee_minimum_size = (
+                self._dtr_config.evictee_minimum_size
+            )
+        # graph optimization
+        if self._graph_opt_config is not None:
+            mapping = {None: 0, False: 1, True: 2}
+            jit_config = graph.options.graph_opt.jit_config
+            jit_config.fuse_dimshuffle = mapping[
+                self._graph_opt_config.jit_fuse_dimshuffle
+            ]
+            jit_config.fuse_reduce = mapping[self._graph_opt_config.jit_fuse_reduce]
         # sublinear
         if self._sublinear_memory_config is not None:
             graph.options.enable_sublinear_memory_opt = True
@@ -513,14 +544,21 @@ class trace:
         # profile
         if self._profiling:
             self._profiler = GraphProfiler(graph)
+        self._profiler2 = None
         if int(os.getenv("MEGENGINE_INPLACE_UPDATE", "0")):
             graph.options.var_sanity_check_first_run = False
+
+    def _execute_graph(self, graph: G.Graph, *args):
+        if is_profiling() and (self._profiler2 is None):
+            self._profiler2 = GraphProfiler2(graph)
+        elif not is_profiling() and (self._profiler2 is not None):
+            self._profiler2 = None
+        graph.execute(*args)
 
     def _compile(self):
         graph = self._graph = G.Graph()
         graph.options.async_exec_level = 0b100
         self._apply_graph_options(graph)
-        # graph.options.graph_opt_level = 0
         need_reset_nodes = self._need_reset_nodes = []
         # links enforce ordering of I/O nodes
         in_out_links = ()
@@ -563,7 +601,7 @@ class trace:
                 if not hasattr(info, "varnode"):
                     assert info.external
                     if info.bound_data:
-                        if hasattr(info, "is_const") and info.is_const:
+                        if getattr(info, "is_const", False):
                             info.varnode = graph.make_const(
                                 info.bound_data.numpy(),
                                 info.bound_data.dtype,
@@ -594,10 +632,7 @@ class trace:
 
                 ivars.append(info.varnode)
 
-            if isinstance(op, BackwardGraph):
-                ovars = G.apply_backward_varnode(op, *ivars)
-            else:
-                ovars = G.apply_normal_varnode(op, *ivars)
+            ovars = G.apply_normal_varnode(op, *ivars)
 
             if require_links and len(ovars) > 0:
                 io_links = (ovars[0],)
@@ -635,30 +670,12 @@ class trace:
             opnode.reset()
 
     def __call__(self, *args, **kwargs):
-        if is_tracing():
-            return self.__wrapped__(*args, **kwargs)
         with self._setup():
             if self._capture_as_const:
                 self._process_inputs(*args, **kwargs)
             outputs = self.__wrapped__(*args, **kwargs)
             if self._capture_as_const:
                 self._process_outputs(outputs)
-
-            # outputs could be None
-            if outputs is not None:
-                list_outputs = outputs
-                if isinstance(outputs, collections.abc.Mapping):
-                    _, list_outputs = zip(*sorted(outputs.items()))
-                elif not isinstance(outputs, collections.abc.Sequence):
-                    list_outputs = (outputs,)
-
-                for o in list_outputs:
-                    # if outputs are copied, then use the newest info in trace data structure
-                    if o._copied:
-                        self._active_tensors[o._mixin_handle] = TensorWeakRef(o)
-                        if self._untraced and self._symbolic:
-                            self._lazy_eval_tensors[o._mixin_handle] = TensorWeakRef(o)
-
             return outputs
 
     def dump(
@@ -675,6 +692,8 @@ class trace:
         strip_info_file=None,
         append_json=False,
         optimize_for_inference=True,
+        user_info: Any = None,
+        enable_metadata: bool = True,
         **kwargs
     ):
         r"""
@@ -702,6 +721,8 @@ class trace:
             if set false, will rewrite strip_info_file
         :param optimize_for_inference: enbale optmizations,
             will skip all optimize options if this is False. Default: True
+        :param user_info: any type object, which will be pickled to bytes.
+        :param enable_metadata: whether to save metadata into output file.
 
         :Keyword Arguments:
 
@@ -734,6 +755,9 @@ class trace:
             * enable_chwn4 --
                 whether to use CHWN4 data layout, currently
                 used in nvidia backend with tensorcore.
+            * enable_nchw64 --
+                whether to use NCHW64 data layout, used for fast int4
+                support on Nvidia GPU.
 
             * enable_fuse_conv_bias_nonlinearity: whether to fuse conv+bias+nonlinearty
                 into one opr.
@@ -830,6 +854,10 @@ class trace:
                         name=info.name,
                     )
                 ivars.append(h2v[h])
+            if isinstance(op, BatchNorm):
+                assert (
+                    op.fwd_mode == BatchNorm.FwdMode.INFERENCE
+                ), "can not dump BatchNorm in training mode, maybe you forget to do model.eval()?"
             ovars = G.apply_normal_varnode(op, *ivars)
 
             AutoNaming.record_opnode(ovars[0].op)
@@ -852,11 +880,23 @@ class trace:
             dest_vars.append(v)
 
         if optimize_for_inference:
-            dest_vars = G.optimize_for_inference(dest_vars, **kwargs)
+            dest_vars, optimize_options = G.optimize_for_inference(dest_vars, **kwargs)
+
+        metadata = SerializationMetadata()
+        if enable_metadata:
+            metadata.user_info = pickle.dumps(user_info)
+            metadata.is_valid = True
+            metadata.graph_modified = False
+            if optimize_for_inference:
+                metadata.optimize_options = optimize_options
 
         if isinstance(file, str):
             permission = "wb" if append == False else "ab"
             file = open(file, permission)
+
+        if keep_opr_priority:
+            graph._set_priority_to_id(dest_vars)
+
         dump_content, dump_info = G.dump_graph(
             dest_vars,
             keep_var_name=keep_var_name,
@@ -865,6 +905,7 @@ class trace:
             keep_opr_priority=keep_opr_priority,
             strip_info_file=strip_info_file,
             append_json=append_json,
+            metadata=metadata,
         )
         file.write(dump_content)
         return dump_info
@@ -1001,11 +1042,6 @@ class trace:
             raise RuntimeError("trace is not set with profiling=True")
         return json.loads(self._profiler.get())
 
-    def __del__(self):
-        for x in self._tinfo:
-            if getattr(x, "bound_data", None):
-                x.bound_data = None
-
     def trace(self, *args, **kwargs):
         raise NotImplementedError(
             "trace is deemed unbeneficial with the new "
@@ -1111,10 +1147,7 @@ def apply_symbolic_mode(op: OpDef, *args: RawTensor):
         ivars[0] = opnode.outputs[0]
         active_trace._lazy_eval_links = (ivars[0],)
 
-    if isinstance(op, BackwardGraph):
-        ovars = G.apply_backward_varnode(op, *ivars)
-    else:
-        ovars = G.apply_normal_varnode(op, *ivars)
+    ovars = G.apply_normal_varnode(op, *ivars)
     outputs = [RawTensor(o) for o in ovars]
 
     if require_links:
@@ -1148,10 +1181,6 @@ def apply_compiled_mode(op: OpDef, *args: RawTensor):
 
 def apply_const_compiled_mode(value, dtype, device, is_const, no_cache, name):
     if skip_tracing:
-        args = [
-            RawTensor(x._dev_tensor()) if x.__class__ is CompiledTensorProxy else x
-            for x in args
-        ]
         unset_tracing()
         ret = RawTensor(value, dtype, device, False, name)
         set_tracing()
@@ -1160,6 +1189,9 @@ def apply_const_compiled_mode(value, dtype, device, is_const, no_cache, name):
 
 
 def apply_with_tracing(op: OpDef, *args: RawTensor):
+    if active_trace._graph:
+        # if member _graph exits, then is_compiled
+        return apply_compiled_mode(op, *args)
     if hasattr(op, "scope"):
         op.scope = AutoNaming.get_scope()
     if active_trace._symbolic:
@@ -1174,11 +1206,16 @@ def apply_with_tracing(op: OpDef, *args: RawTensor):
 
 
 def apply_const_with_tracing(value, dtype, device, is_const, no_cache, name):
+    if active_trace._graph:
+        return apply_const_compiled_mode(value, dtype, device, is_const, no_cache, name)
     if active_trace._symbolic:
         outputs = apply_const_symbolic_mode(value, dtype, device, name)
     else:
         unset_tracing()
-        outputs = (RawTensor(value, dtype, device, False, name),)
+        outputs = RawTensor(value, dtype, device, False, name)
+        if np.array(value).ndim == 0:
+            setscalar(outputs)
+        outputs = (outputs,)
         set_tracing()
     active_trace._record_const(outputs)
     return list(outputs)

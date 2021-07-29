@@ -9,38 +9,86 @@
 import copy
 
 import numpy as np
+import pytest
+from utils import get_var_value, make_tensor
 
 from megengine.core.tensor.dtype import get_scale, get_zero_point, qint8, quint8
-from megengine.tensor import Tensor
+from megengine.tensor import Parameter, Tensor
+from megengine.utils.network import Network
 
 
-def test_basic():
+@pytest.mark.parametrize("is_varnode", [True, False])
+def test_basic(is_varnode):
+    if is_varnode:
+        network = Network()
+    else:
+        network = None
+
     x_np = np.random.rand(10).astype("float32")
-    x = Tensor(x_np)
+    x = make_tensor(x_np, network)
     y = x * x
     y_np = y.numpy()
     np.testing.assert_almost_equal(y_np, x_np * x_np)
 
 
-def test_literal_arith():
+@pytest.mark.parametrize("is_varnode", [True, False])
+def test_literal_arith(is_varnode):
+    if is_varnode:
+        network = Network()
+    else:
+        network = None
+
     x_np = np.random.rand(10).astype("float32")
-    x = Tensor(x_np)
+    x = make_tensor(x_np, network)
     y = x * 2
     y_np = y.numpy()
     np.testing.assert_almost_equal(y_np, x_np * 2)
 
 
-def test_matmul():
-    A = Tensor(np.random.rand(5, 7).astype("float32"))
-    B = Tensor(np.random.rand(7, 10).astype("float32"))
+@pytest.mark.parametrize("is_varnode", [True, False])
+def test_matmul(is_varnode):
+    if is_varnode:
+        network = Network()
+    else:
+        network = None
+
+    A = make_tensor(np.random.rand(5, 7).astype("float32"), network)
+    B = make_tensor(np.random.rand(7, 10).astype("float32"), network)
     C = A @ B
-    np.testing.assert_almost_equal(C.numpy(), A.numpy() @ B.numpy(), decimal=6)
+    if is_varnode:
+        np.testing.assert_almost_equal(
+            get_var_value(C), get_var_value(A) @ get_var_value(B), decimal=6
+        )
+    else:
+        np.testing.assert_almost_equal(C.numpy(), A.numpy() @ B.numpy(), decimal=6)
 
 
-def test_reduce():
+@pytest.mark.parametrize("is_varnode", [True, False])
+def test_inplace_add(is_varnode):
+    if is_varnode:
+        network = Network()
+    else:
+        network = None
+
+    x_np = np.random.rand(10).astype("float32")
+    y_np = np.random.rand(10).astype("float32")
+    x = make_tensor(x_np, network)
+    y = make_tensor(y_np, network)
+    y += x
+    out_np = y.numpy()
+    np.testing.assert_almost_equal(out_np, x_np + y_np)
+
+
+@pytest.mark.parametrize("is_varnode", [True, False])
+def test_reduce(is_varnode):
+    if is_varnode:
+        network = Network()
+    else:
+        network = None
+
     def test_x(x_np):
         for m in ["sum", "prod", "min", "max", "mean"]:
-            x = Tensor(x_np)
+            x = make_tensor(x_np, network)
             y = getattr(x, m)(axis=-1, keepdims=True)
             np.testing.assert_almost_equal(y.numpy(), getattr(x_np, m)(-1), decimal=6)
 
@@ -50,22 +98,40 @@ def test_reduce():
     test_x(np.array([True, False, True]))
 
 
-def test_set_value():
+@pytest.mark.parametrize("is_varnode", [True, False])
+def test_set_value(is_varnode):
+    if is_varnode:
+        network = Network()
+    else:
+        network = None
+
     v0 = np.random.random((2, 3)).astype(np.float32)
-    param = Tensor(v0)
+    param = make_tensor(v0, network)
     v1 = np.random.random((2, 3)).astype(np.float32)
     param[...] = v1
     np.testing.assert_allclose(param.numpy(), v1, atol=5e-6)
 
 
-def test_set_subtensor():
-    x = Tensor([1, 2, 3])
+@pytest.mark.parametrize("is_varnode", [True, False])
+def test_set_subtensor(is_varnode):
+    if is_varnode:
+        network = Network()
+    else:
+        network = None
+
+    x = make_tensor([1, 2, 3], network)
     x[:] = [1, 1, 1]
-    np.testing.assert_almost_equal(x.numpy(), [1, 1, 1], decimal=6)
+    np.testing.assert_almost_equal(
+        get_var_value(x) if is_varnode else x.numpy(), [1, 1, 1], decimal=6
+    )
     x[[0, 2]] = [3, 2]
-    np.testing.assert_almost_equal(x.numpy(), [3, 1, 2], decimal=6)
+    np.testing.assert_almost_equal(
+        get_var_value(x) if is_varnode else x.numpy(), [3, 1, 2], decimal=6
+    )
     x[1:3] = [4, 5]
-    np.testing.assert_almost_equal(x.numpy(), [3, 4, 5], decimal=6)
+    np.testing.assert_almost_equal(
+        get_var_value(x) if is_varnode else x.numpy(), [3, 4, 5], decimal=6
+    )
 
 
 def test_computing_with_numpy_array():
@@ -78,14 +144,27 @@ def test_computing_with_numpy_array():
     np.testing.assert_equal(np.equal(xx, xx).numpy(), np.equal(x, x))
 
 
-def test_transpose():
+@pytest.mark.parametrize("is_varnode", [True, False])
+def test_transpose(is_varnode):
+    if is_varnode:
+        network = Network()
+    else:
+        network = None
+
     x = np.random.rand(2, 5).astype("float32")
-    xx = Tensor(x)
+    xx = make_tensor(x, network)
     np.testing.assert_almost_equal(xx.T.numpy(), x.T)
 
 
-def test_as_type():
-    x = Tensor([1, 2, 3], dtype=np.float32)
+@pytest.mark.parametrize("is_varnode", [True, False])
+def test_as_type(is_varnode):
+    if is_varnode:
+        network = Network()
+    else:
+        network = None
+
+    x_np = np.array([1, 2, 3], dtype=np.float32)
+    x = make_tensor(x_np, network)
     y = x.astype(qint8(0.1))
     np.testing.assert_almost_equal(get_scale(y.dtype), 0.1)
     z = y.astype(qint8(0.2))
@@ -130,3 +209,11 @@ def test_name():
     assert x.name == "x"
     x = Tensor(0, name="x")
     assert x.name == "x"
+
+
+def test_tensor_type():
+    x1 = Parameter(1)
+    x2 = Tensor(2)
+    y1 = x1 + x2
+    y2 = x2 + x1
+    assert type(y1) == type(y2)

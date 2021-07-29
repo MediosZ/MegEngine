@@ -368,9 +368,11 @@ void make_canonized_filter_meta_nchwx(
     megdnn_assert(param.format == Param::Format::NCHW4 ||
                   param.format == Param::Format::NCHW8 ||
                   param.format == Param::Format::NCHW32 ||
-                  param.format == Param::Format::NCHW4_NCHW ||
+                  param.format == Param::Format::NCHW4_NCHW || 
+                  param.format == Param::Format::NCHW4_NHWC || 
                   param.format == Param::Format::NCHW4_NCHW32 ||
-                  param.format == Param::Format::NCHW32_NCHW4);
+                  param.format == Param::Format::NCHW32_NCHW4 ||
+                  param.format == Param::Format::NCHW64);
     auto img_ndim = src_ndim - 3;
     size_t flt_start = 0, flt_spatial_start = 2;
     if (param.sparse == Param::Sparse::DENSE) {
@@ -497,6 +499,7 @@ ConvolutionBase<Parameter>::make_canonized_filter_meta(
         }
     } else if (param().format == Param::Format::NCHW4 ||
                param().format == Param::Format::NCHW4_NCHW ||
+               param().format == Param::Format::NCHW4_NHWC || 
                param().format == Param::Format::NCHW4_NCHW32) {
         make_canonized_filter_meta_nchwx<4, Parameter>(src_ndim, filter,
                                                        param(), ret);
@@ -517,6 +520,9 @@ ConvolutionBase<Parameter>::make_canonized_filter_meta(
     } else if (param().format == Param::Format::CHWN4) {
         make_canonized_filter_meta_chwnx<4, Parameter>(src_ndim, filter,
                                                        param(), ret);
+    } else if (param().format == Param::Format::NCHW64) {
+        make_canonized_filter_meta_nchwx<64, Parameter>(src_ndim, filter,
+                                                        param(), ret);
     } else {
         megdnn_assert(param().format == Param::Format::NHWC ||
                       param().format == Param::Format::NCHW);
@@ -539,10 +545,16 @@ void ConvolutionBase<Parameter>::check_or_deduce_dtype_fwd(DType src,
         supported_dst_dtype = {dtype::Int32(), dtype::Int16()};
     } else if (src.enumv() == DTypeEnum::QuantizedS8 ||
                src.enumv() == DTypeEnum::Quantized8Asymm ||
+               src.enumv() == DTypeEnum::QuantizedS4 || 
                src.enumv() == DTypeEnum::Quantized4Asymm) {
         supported_dst_dtype.push_back(
                 dtype::QuantizedS32(mul_scale(src, filter)));
-        if (dst.valid() && dst.enumv() == src.enumv()) {
+        bool cond_dst =
+                dst.valid() && (dst.enumv() == src.enumv() ||
+                                ((dst.enumv() == DTypeEnum::QuantizedS4 ||
+                                  dst.enumv() == DTypeEnum::Quantized4Asymm) &&
+                                 src.enumv() == DTypeEnum::QuantizedS8));
+        if (cond_dst) {
             supported_dst_dtype.push_back(dst);
         }
         if (src.enumv() == DTypeEnum::QuantizedS8) {
@@ -554,7 +566,7 @@ void ConvolutionBase<Parameter>::check_or_deduce_dtype_fwd(DType src,
         supported_dst_dtype.push_back(
                 dtype::QuantizedS8(src.param<dtype::QuantizedS32>().scale /
                                    filter.param<dtype::QuantizedS8>().scale));
-    } else {
+    }else {
         megdnn_throw(ssprintf("unsupported input / filter DType: %s x %s",
                               src.name(), filter.name()));
     }
@@ -590,11 +602,11 @@ ConvolutionBase<Parameter>::deduce_layout_fwd(const TensorLayout& src,
                                               TensorLayout& dst) const {
     auto errmsg = [&]() { return get_errmsg(src, filter, dst, param()); };
     MEGDNN_MARK_USED_VAR(errmsg);
-    megdnn_assert_contiguous(src);
-    megdnn_assert_contiguous(filter);
     megdnn_assert(src.ndim >= 3_z, "%s", errmsg().c_str());
-    megdnn_assert(src.dtype.enumv() == filter.dtype.enumv(), "%s",
-                  errmsg().c_str());
+    megdnn_assert(((src.dtype.enumv() == filter.dtype.enumv()) ||
+                   (src.dtype.enumv() == DTypeEnum::Quantized4Asymm &&
+                    filter.dtype.enumv() == DTypeEnum::QuantizedS4)),
+                  "%s", errmsg().c_str());
     check_or_deduce_dtype_fwd(src.dtype, filter.dtype, dst.dtype);
     size_t img_dim;
     if (param().format == Param::Format::NCHW ||
@@ -606,7 +618,8 @@ ConvolutionBase<Parameter>::deduce_layout_fwd(const TensorLayout& src,
     } else {
         megdnn_assert(param().format == Param::Format::NHWCD4 ||
                       param().format == Param::Format::NCHW4 ||
-                      param().format == Param::Format::NCHW4_NCHW ||
+                      param().format == Param::Format::NCHW4_NCHW || 
+                      param().format == Param::Format::NCHW4_NHWC || 
                       param().format == Param::Format::NCHW4_NCHW32 ||
                       param().format == Param::Format::NCHW44 ||
                       param().format == Param::Format::NCHW44_DOT ||
@@ -614,7 +627,8 @@ ConvolutionBase<Parameter>::deduce_layout_fwd(const TensorLayout& src,
                       param().format == Param::Format::NCHW32 ||
                       param().format == Param::Format::NCHW32_NCHW4 ||
                       param().format == Param::Format::NCHW88 ||
-                      param().format == Param::Format::CHWN4);
+                      param().format == Param::Format::CHWN4 ||
+                      param().format == Param::Format::NCHW64);
         img_dim = src.ndim - 3;
         if ((param().format == Param::Format::NCHW88 ||
              param().format == Param::Format::NCHW44_DOT ||
@@ -712,6 +726,15 @@ ConvolutionBase<Parameter>::deduce_layout_fwd(const TensorLayout& src,
                     "but got src %s, filter %s",
                     src.to_string().c_str(), filter.to_string().c_str());
         }
+        if (param().format == Param::Format::NCHW64) {
+            megdnn_assert(src.ndim == 5 &&
+                                  (filter.ndim == 5 || filter.ndim == 6) &&
+                                  src[src.ndim - 1] == 64 &&
+                                  filter[filter.ndim - 1] == 64,
+                          "NCHW64 require src and filter's ndim is 5 or 6, and "
+                          "last shape is 64 but got src %s, filter %s",
+                          src.to_string().c_str(), filter.to_string().c_str());
+        }
     }
     megdnn_assert(img_dim == 2,
                   "currently only convolution on 2D image is supported");
@@ -739,7 +762,6 @@ ConvolutionBase<Parameter>::deduce_layout_fwd(const TensorLayout& src,
                     src[i + src_or_dst_spatial_start], cflt.dilated_spatial[i],
                     cflt.stride[i], cflt.padding[i]);
         }
-        dst.init_contiguous_stride();
     } else if (param().format == Param::Format::NCHW4) {
         megdnn_assert(src.ndim == 5,
                       "invalid src ndim for NCHW4, expected=5, got=%zu",
@@ -865,6 +887,21 @@ ConvolutionBase<Parameter>::deduce_layout_fwd(const TensorLayout& src,
                                   cflt.stride[0], cflt.padding[0]);
         dst[3] = infer_conv_shape(src[3], cflt.dilated_spatial[1],
                                   cflt.stride[1], cflt.padding[1]);
+    } else if (param().format == Param::Format::NCHW4_NHWC) {
+        megdnn_assert(src.ndim == 5,
+                      "invalid src ndim for NCHW4_NHWC, expected=5, got=%zu",
+                      src.ndim);
+        megdnn_assert(cflt.icpg * cflt.group == src[1] * 4,
+                      "%s icpg=%u group=%u", errmsg().c_str(), cflt.icpg,
+                      cflt.group);
+        dst.ndim = 4;
+        dst[0] = src[0];
+        dst[1] = infer_conv_shape(src[2], cflt.dilated_spatial[0],
+                                  cflt.stride[0], cflt.padding[0]);
+        dst[2] = infer_conv_shape(src[3], cflt.dilated_spatial[1],
+                                  cflt.stride[1], cflt.padding[1]);
+        auto oc = cflt.ocpg * cflt.group;
+        dst[3] = oc;
     } else if (param().format == Param::Format::NCHW4_NCHW32) {
         megdnn_assert(src.ndim == 5,
                       "invalid src ndim for NCHW4_NCHW32, expected=5, got=%zu",
@@ -899,6 +936,23 @@ ConvolutionBase<Parameter>::deduce_layout_fwd(const TensorLayout& src,
         dst[3] = infer_conv_shape(src[3], cflt.dilated_spatial[1],
                                   cflt.stride[1], cflt.padding[1]);
         dst[4] = 4;
+    } else if (param().format == Param::Format::NCHW64) {
+        megdnn_assert(src.ndim == 5,
+                      "invalid src ndim for NCHW64, expected=5, got=%zu",
+                      src.ndim);
+        megdnn_assert(cflt.icpg * cflt.group == src[1] * 64,
+                      "%s icpg=%u group=%u", errmsg().c_str(), cflt.icpg,
+                      cflt.group);
+        dst.ndim = src.ndim;
+        dst[0] = src[0];
+        auto oc = cflt.ocpg * cflt.group;
+        megdnn_assert(oc % 64 == 0);
+        dst[1] = oc / 64;
+        dst[2] = infer_conv_shape(src[2], cflt.dilated_spatial[0],
+                                  cflt.stride[0], cflt.padding[0]);
+        dst[3] = infer_conv_shape(src[3], cflt.dilated_spatial[1],
+                                  cflt.stride[1], cflt.padding[1]);
+        dst[4] = 64;
     } else {
         megdnn_assert(param().format == Param::Format::NHWCD4);
         megdnn_assert(src.ndim == 5,
@@ -919,7 +973,12 @@ ConvolutionBase<Parameter>::deduce_layout_fwd(const TensorLayout& src,
         megdnn_assert(src[4] == 4);
         dst[4] = 4;
     }
-    dst.format = src.format;
+    if (!src.format.is_default() &&
+        !src.format.is_lowbit_aligned()) {  // propagate
+        dst.format = src.format;
+    } else {  // determined by dtype
+        dst.format = TensorFormat(dst.dtype);
+    } 
     dst.init_contiguous_stride();
     return cflt;
 }
@@ -938,6 +997,8 @@ ConvolutionBase<param::Convolution>::CanonizedFilterMeta
 ConvolutionBase<param::Convolution>::check_layout_fwd(
         const TensorLayout& src, const TensorLayout& filter,
         const TensorLayout& dst) const {
+    megdnn_assert_contiguous(src);
+    megdnn_assert_contiguous(filter);
     TensorLayout dst_expected;
     dst_expected.dtype = dst.dtype;
 
@@ -951,6 +1012,8 @@ ConvolutionBase<param::ConvBias>::CanonizedFilterMeta
 ConvolutionBase<param::ConvBias>::check_layout_fwd(
         const TensorLayout& src, const TensorLayout& filter,
         const TensorLayout& dst) const {
+    megdnn_assert_contiguous(src);
+    megdnn_assert_contiguous(filter);
     TensorLayout dst_expected;
     dst_expected.dtype = dst.dtype;
 
@@ -964,6 +1027,8 @@ ConvolutionBase<param::BatchConvBias>::CanonizedFilterMeta
 ConvolutionBase<param::BatchConvBias>::check_layout_fwd(
         const TensorLayout& src, const TensorLayout& filter,
         const TensorLayout& dst) const {
+    megdnn_assert_contiguous(src);
+    megdnn_assert_contiguous(filter);
     TensorLayout dst_expected;
     dst_expected.dtype = dst.dtype;
 
@@ -1147,7 +1212,12 @@ ConvolutionBackwardFilter::check_exec(const TensorLayout& src,
                           diff.dtype.category() == DTypeCategory::FLOAT &&
                           grad.dtype.category() == DTypeCategory::FLOAT,
                   "only float type is supported for conv backward filter");
-    auto ret = check_layout_fwd(src, grad, diff);
+    auto src_fwd = src;
+    auto diff_fwd = diff;
+
+    src_fwd.init_contiguous_stride();
+    diff_fwd.init_contiguous_stride();
+    auto ret = check_layout_fwd(src_fwd, grad, diff_fwd);
     auto required_workspace_in_bytes = get_workspace_in_bytes(src, diff, grad);
     megdnn_assert(workspace_in_bytes >= required_workspace_in_bytes);
     return ret;

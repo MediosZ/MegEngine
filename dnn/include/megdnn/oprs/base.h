@@ -90,6 +90,7 @@ enum class AlgoDataType : uint32_t {
     INT8X8X16 = 1 << 4,
     INT16X16X32 = 1 << 5,
     INT4X4X16 = 1 << 6,
+    QINT4x4x32 = 1 << 7, 
 };
 
 /*!
@@ -122,6 +123,20 @@ public:
          * these algorithms to speed up fastrun.
          * */
         NAIVE = 1 << 1,
+
+        /**
+         * \brief whether the algo is usable once shape changed.
+         * */
+        USABLE_DEPEND_ON_SHAPE = 1 << 2,
+
+        /**
+         * \brief whether the accuracy of the algo is dependent with respect
+         * to batch
+         * In the case of using algorithm with this attribute, even if the
+         * content of each batch is the same, the output under multiple batch
+         * input and single batch input may not equal
+         * */
+        ACCURACY_DEPEND_ON_BATCH = 1 << 3,
     };
 
     /**
@@ -244,6 +259,8 @@ public:
         DEFORMABLE_CONV_BACKWARD_FILTER,
         CONVBIAS_FORWARD,
         BATCH_CONV_FORWARD,
+        POOLING_FORWARD,
+        POOLING_BACKWARD,
     };
 
     struct SearchItem {
@@ -317,6 +334,63 @@ protected:
 
 private:
     ExecutionPolicy m_execution_policy;
+};
+
+//! specialize for nargs == 2
+template <class Opr>
+class MultiAlgoOpr<Opr, 2> : public MultiAlgoOpr<Opr, -1> {
+public:
+    using Algorithm = detail::Algorithm;
+    using AlgorithmInfo = detail::Algorithm::Info;
+    using AlgoAttribute = detail::Algorithm::Attribute;
+
+    //! get all possible algorithm decriptions for the specified layouts
+    std::vector<AlgorithmInfo> get_all_algorithms_info(const TensorLayout& p0,
+                                                       const TensorLayout& p1) {
+        std::vector<AlgorithmInfo> ret;
+        for (auto&& algo : get_all_algorithms(p0, p1)) {
+            ret.emplace_back(algo->info());
+        }
+        return ret;
+    }
+
+    /**
+     * \brief Returns the best algorithm information which indicate the
+     * algorithm by heuristic.
+     *
+     * The selected algorithm should not use workspace more than
+     * \p workspace_limit_in_bytes.
+     */
+    AlgorithmInfo get_algorithm_info_heuristic(
+            const TensorLayout& p0, const TensorLayout& p1,
+            size_t workspace_limit_in_bytes =
+                    std::numeric_limits<size_t>::max(),
+            const AlgoAttribute& positive_attr = AlgoAttribute::DEFAULT,
+            const AlgoAttribute& negative_attr = AlgoAttribute::DEFAULT) {
+        return get_algorithm_heuristic(p0, p1, workspace_limit_in_bytes,
+                                       positive_attr, negative_attr)
+                ->info();
+    }
+
+protected:
+    ~MultiAlgoOpr() = default;
+
+    //! get all possible algorithms for the specified layouts
+    virtual std::vector<Algorithm*> get_all_algorithms(
+            const TensorLayout& p0, const TensorLayout& p1) = 0;
+
+    /**
+     * \brief Returns the best algorithm by heuristic.
+     *
+     * The selected algorithm should not use workspace more than
+     * \p workspace_limit_in_bytes.
+     */
+    virtual Algorithm* get_algorithm_heuristic(
+            const TensorLayout& p0, const TensorLayout& p1,
+            size_t workspace_limit_in_bytes =
+                    std::numeric_limits<size_t>::max(),
+            const AlgoAttribute& positive_attr = AlgoAttribute::DEFAULT,
+            const AlgoAttribute& negative_attr = AlgoAttribute::DEFAULT) = 0;
 };
 
 //! specialize for nargs == 3

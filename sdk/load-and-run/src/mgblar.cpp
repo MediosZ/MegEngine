@@ -13,6 +13,7 @@
 #include "./infile_persistent_cache.h"
 #include "./json_loader.h"
 #include "./npy.h"
+#include "./text_table.h"
 
 #include "megbrain/comp_node_env.h"
 #include "megbrain/gopt/inference.h"
@@ -91,6 +92,8 @@ R"__usage__(
     param.json --data bbox:bbox.npy@batchid:b.npy --data rect:[0,0,227,227];
     batchid:0,1,2,3. --io-dump or --bin-io-dump
     should be enabled at the same time.
+  --model-info
+    Format and display model input/output  tensor info.
   --io-dump <output> | --bin-io-dump <output dir>
     Dump input/output values of all internal variables to output file or
     directory, in text or binary format. The binary file can be parsed by
@@ -139,6 +142,12 @@ R"__usage__(
     the doc of `ComputingGraph::Options::comp_node_seq_record_level` for more
     details.
 )__usage__"
+#ifndef __IN_TEE_ENV__ 
+R"__usage__(
+  --get-static-mem-info <svgname>
+    Record the static graph's static memory info.
+)__usage__"
+#endif
 #if MGB_ENABLE_FASTRUN
 R"__usage__(
  --full-run
@@ -156,6 +165,11 @@ R"__usage__(
 R"__usage__(
   --fast-run-algo-policy <path>
     It will read the cache file before profile, and save new fastrun in cache file.
+  --fast-run-shared-batch-size
+    Set the batch size used during fastrun, Note that it may not be the same as the actual running batch size
+  --binary-equal-between-batch
+    Each batch of output is promised binary equal if each batch of input is binary equal.
+    Note that if this option is turned on, `--reproducible` will also be turned on.
   --reproducible
     Enable choose algo which is reproducible. It mainly used for cudnn algos.
     See https://docs.nvidia.com/deeplearning/sdk/cudnn-developer-guide/index.html#reproducibility
@@ -227,6 +241,11 @@ R"__usage__(
 R"__usage__(
   --enable-fuse-preprocess
     Fusion astype\pad_channel\dimshuffle and etc opr from h2d op
+)__usage__"
+R"__usage__(
+  --enable-nchw64
+    Execute operators with kernels implemented in MegDNN with NCHW64 tensor format. Can only be used
+    on Nvidia GPUs, which natively support fast int4 tensorcore inference.
 )__usage__"
 ;
 
@@ -514,6 +533,7 @@ struct Args {
 
     COprArgs c_opr_args;
 
+    bool display_model_info = false;
     bool disable_assert_throw = false;
     bool share_param_mem = false;
 #if MGB_ENABLE_FASTRUN
@@ -522,6 +542,9 @@ struct Args {
 #endif
     bool reproducible = false;
     std::string fast_run_cache_path;
+#ifndef __IN_TEE_ENV__
+    std::string static_mem_svg_path;
+#endif
     bool copy_to_host = false;
     int nr_run = 10;
     int nr_warmup = 1;
@@ -624,6 +647,36 @@ public:
     }
 };
 
+void format_and_print(const std::string& tablename, const Args& env) {
+    auto table = mgb::TextTable(tablename);
+    table.padding(1);
+    table.align(mgb::TextTable::Align::Mid)
+        .add("type")
+        .add("name")
+        .add("shape")
+        .eor();
+
+    for (auto &&i: env.load_ret.tensor_map) {
+        table.align(mgb::TextTable::Align::Mid)
+            .add("INPUT")
+            .add(i.first)
+            .add(i.second->shape().to_string())
+            .eor();
+    }
+    
+    for (auto&& i : env.load_ret.output_var_list) {
+        table.align(mgb::TextTable::Align::Mid)
+            .add("OUTPUT")
+            .add(i.node()->name())
+            .add(i.shape().to_string())
+            .eor();
+    }
+
+    std::stringstream ss;
+    ss << table;
+    printf("%s\n\n", ss.str().c_str());
+}
+
 void run_test_st(Args &env) {
     std::unique_ptr<serialization::InputFile> inp_file;
 
@@ -662,6 +715,10 @@ void run_test_st(Args &env) {
     // compile function to compute all outputs
     ComputingGraph::OutputSpec out_spec;
     std::string output_names;
+    
+    if (env.display_model_info) {
+        format_and_print("Original Model Info", env);
+    }
 
     OutputDumper output_dumper(env);
     for (auto&& i : env.load_ret.output_var_list) {
@@ -700,23 +757,20 @@ void run_test_st(Args &env) {
 
     mgb::gopt::set_opr_algo_workspace_limit_inplace(vars, env.workspace_limit);
     using S = opr::mixin::AlgoChooserHelper::ExecutionPolicy::Strategy;
-    S strategy = S::HEURISTIC;
+    S strategy = static_cast<S>(0);
+    if (env.reproducible) {
+        strategy = S::REPRODUCIBLE;
+    }
 #if MGB_ENABLE_FASTRUN
     if (env.use_full_run) {
-        if (env.reproducible) {
-            strategy = S::PROFILE | S::REPRODUCIBLE;
-        } else {
-            strategy = S::PROFILE;
-        }
+        strategy = S::PROFILE | strategy;
     } else if (env.use_fast_run) {
-        strategy = S::PROFILE | S::OPTIMIZED;
-    } else if (env.reproducible) {
-        strategy = S::HEURISTIC | S::REPRODUCIBLE;
+        strategy = S::PROFILE | S::OPTIMIZED | strategy;
+    } else {
+        strategy = S::HEURISTIC | strategy;
     }
 #else
-    if (env.reproducible) {
-        strategy = S::HEURISTIC | S::REPRODUCIBLE;
-    }
+    strategy = S::HEURISTIC | strategy;
 #endif
     mgb::gopt::modify_opr_algo_strategy_inplace(vars, strategy);
     if (!env.fast_run_cache_path.empty()) {
@@ -749,6 +803,11 @@ void run_test_st(Args &env) {
     }
 
     auto func = env.load_ret.graph_compile(out_spec);
+#ifndef __IN_TEE_ENV__
+    if (!env.static_mem_svg_path.empty()) {
+        func->get_static_memory_alloc_info(env.static_mem_svg_path);
+    }
+#endif
     auto warmup = [&]() {
         printf("=== prepare: %.3fms; going to warmup\n",
                timer.get_msecs_reset());
@@ -974,6 +1033,10 @@ void run_test_st(Args &env) {
         TensorRTEngineCache::inst().dump_cache();
     }
 #endif
+    
+    if (env.display_model_info) {
+        format_and_print("Runtime Model Info", env);
+    }
 }
 
 }  // anonymous namespace
@@ -1147,6 +1210,7 @@ Args Args::from_argv(int argc, char **argv) {
         cb(nchw88);
         cb(nchw32);
         cb(nhwcd4);
+        cb(nchw64);
 #undef cb
         if (!strcmp(argv[i], "--enable-nchw44-dot")) {
             mgb_log_warn("enable-nchw44-dot optimization");
@@ -1201,6 +1265,11 @@ Args Args::from_argv(int argc, char **argv) {
                 ret.data_files.emplace_back(substr);
                 start = end + 1;
             }
+            continue;
+        }
+        if (!strcmp(argv[i], "--model-info")) {
+            ++i;
+            ret.display_model_info = true;
             continue;
         }
         if (!strcmp(argv[i], "--io-dump")) {
@@ -1322,6 +1391,18 @@ Args Args::from_argv(int argc, char **argv) {
             graph_opt.comp_node_seq_record_level = 2;
             continue;
         }
+#ifndef __IN_TEE_ENV__
+        if (!strcmp(argv[i], "--get-static-mem-info")) {
+            ++i;
+            mgb_assert(i < argc, "value not given for --get-static-mem-info");
+            ret.static_mem_svg_path = argv[i];
+            mgb_assert(
+                    ret.static_mem_svg_path.find(".svg") != std::string::npos,
+                    "the filename should be end with .svg, but got %s",
+                    ret.static_mem_svg_path.c_str());
+            continue;
+        }
+#endif
 #if MGB_ENABLE_FASTRUN
         if (!strcmp(argv[i], "--fast-run")) {
             ret.use_fast_run = true;
@@ -1335,6 +1416,20 @@ Args Args::from_argv(int argc, char **argv) {
         if (!strcmp(argv[i], "--fast-run-algo-policy")) {
             ++i;
             ret.fast_run_cache_path = argv[i];
+            continue;
+        }
+        if (!strcmp(argv[i], "--fast-run-shared-batch-size")) {
+            ++i;
+            mgb_assert(i < argc,
+                       "value not given for --fast-run-shared-batch-size");
+            int32_t batch_size = std::stoi(argv[i]);
+            mgb_assert(batch_size >= 0);
+            graph_opt.fast_run_config.shared_batch_size = batch_size;
+            continue;
+        }
+        if (!strcmp(argv[i], "--binary-equal-between-batch")) {
+            graph_opt.fast_run_config.binary_equal_between_batch = true;
+            ret.reproducible = true;
             continue;
         }
         if (!strcmp(argv[i], "--reproducible")) {
@@ -1433,6 +1528,14 @@ Args Args::from_argv(int argc, char **argv) {
         return ret;
     }
 
+#if MGB_ENABLE_FASTRUN
+    if (graph_opt.fast_run_config.shared_batch_size) {
+        mgb_assert(ret.use_fast_run || ret.use_full_run ||
+                           !ret.fast_run_cache_path.empty(),
+                   "--fast-run-shared-batch-size should be used with "
+                   "--fast-run/--full-run/--fast-run-algo-policy");
+    }
+#endif
     return ret;
 }
 

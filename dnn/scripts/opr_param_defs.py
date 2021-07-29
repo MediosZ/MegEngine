@@ -36,13 +36,14 @@ pdef('Axis').add_fields('int32', 'axis', 0)
  add_enum(Doc('Format', 'convolution data/filter/output format; see '
               ':class:`RelayoutFormat` for more details'),
           'NCHW', 'NHWC', 'NHWCD4', 'NCHW4', 'NCHW8', 'NCHW32', 'NCHW88',
-          'NCHW44','NCHW44_DOT',
+          'NCHW44','NCHW44_DOT', 
           Doc('NCHW_WINOGRAD', 'NCHW layout with weights tranformed by winograd'),
           Doc('NCHW88_WINOGRAD', 'NCHW88 layout with weights tranformed by winograd'),
           Doc('NCHW44_WINOGRAD', 'NCHW44 layout with weights tranformed by winograd'),
           Doc('NCHW4_NCHW32', 'NCHW4_NCHW32 means input tensors are nchw4 layout, output tensor is nchw32 layout'), 
           Doc('NCHW32_NCHW4', 'NCHW32_NCHW4 means input tensors are nchw32 layout, output tensor is nchw4 layout'), 
           Doc('NCHW4_NCHW', 'NCHW4_NCHW means input tensors are nchw4 layout, output tensor is nchw layout'), 
+          Doc('NCHW4_NHWC', 'NCHW4_NHWC means input tensors are nchw4 layout, output tensor is nhwc layout'), 
           Doc('NHWC_NCHW', 'NHWC_NCHW means input tensors are nhwc layout, '
               'output tensor is nchw layout'),
           Doc('NHWC_NCHW4_IC_SMALL', 'NHWC_NCHW4_IC_SMALL means input tensors are nhwc(c < 4) layout, '
@@ -95,10 +96,11 @@ pdef('Axis').add_fields('int32', 'axis', 0)
  add_enum(Doc('Format', 'convolution data/filter/output format; see '
               ':class:`RelayoutFormat` for more details'),
           'NCHW', 'NHWC', 'NHWCD4', 'NCHW4', 'NCHW8', 'NCHW32', 'NCHW88',
-          'NCHW44','NCHW44_DOT',
+          'NCHW44','NCHW44_DOT', 
           Doc('NCHW4_NCHW32', 'NCHW4_NCHW32 means input tensors are nchw4 layout, output tensor is nchw32 layout'), 
           Doc('NCHW32_NCHW4', 'NCHW32_NCHW4 means input tensors are nchw32 layout, output tensor is nchw4 layout'), 
           Doc('NCHW4_NCHW', 'NCHW4_NCHW means input tensors are nchw4 layout, output tensor is nchw layout'), 
+          Doc('NCHW4_NHWC', 'NCHW4_NHWC means input tensors are nchw4 layout, output tensor is nhwc layout'), 
           Doc('NHWC_NCHW', 'NHWC_NCHW means input tensors are nhwc layout, '
               'output tensor is nchw layout'),
           Doc('NHWC_NCHW4_IC_SMALL', 'NHWC_NCHW4_IC_SMALL means input tensors are nhwc(c < 4) layout, '
@@ -106,7 +108,9 @@ pdef('Axis').add_fields('int32', 'axis', 0)
           Doc('NCHW_NCHW4_IC_SMALL', 'NCHW_NCHW4_IC_SMALL means input tensors are nchw(c < 4) layout, '
               'output tensor is nchw4 layout, padding c=4'),
           Doc('CHWN4', 'CHWN4 is currently only used on Nvidia platform for fast implementation '
-              'of convolution using CUDA/SASS. The channels are splitted to groups of 4 channels.')).
+              'of convolution using CUDA/SASS. The channels are splitted to groups of 4 channels.'), 
+          Doc('NCHW64', 'NCHW64 is designed for convolution implementation to utilizing TensorCore '
+              'instructions for 4-bit integers on Nvidia platforms')).
  add_enum_alias('ComputeMode', 'ConvolutionV1',name_field='compute_mode')
  )
 
@@ -220,7 +224,11 @@ pdef('Axis').add_fields('int32', 'axis', 0)
 
 (pdef('Images2Neibs').
  add_fields('uint32', 'pad_h', 0, 'pad_w', 0, 'stride_h', 1, 'stride_w', 1,
-            'window_h', 3, 'window_w', 3))
+            'dilate_h', 1, 'dilate_w', 1, 'window_h', 3, 'window_w', 3))
+
+(pdef('SlidingWindowTranspose').
+ add_fields('uint32', 'out_h', 0, 'out_w', 0, 'pad_h', 0, 'pad_w', 0, 'stride_h', 1, 'stride_w', 1,
+            'dilate_h', 1, 'dilate_w', 1, 'window_h', 3, 'window_w', 3))
 
 (pdef('Pooling', version=0, is_legacy=True).
  add_enum(
@@ -402,7 +410,11 @@ pdef('Elemwise').add_enum(
     Doc('NOT', 'unary: !x'),
     Doc('AND', 'binary: x && y'),
     Doc('OR', 'binary: x || y'),
-    Doc('XOR', 'binary: x ^ y')
+    Doc('XOR', 'binary: x ^ y'),
+    Doc('SILU', 'unary: x / (1 + exp(-x))'),
+    Doc('SILU_GRAD', 'binary: grad(x / (1 + exp(-x))'),
+    Doc('GELU', 'unary: x Phi(x)'),
+    Doc('GELU_GRAD', 'binary: grad(x Phi(x))'),
 )
 
 pdef('ElemwiseMultiType').add_enum(
@@ -733,11 +745,34 @@ pdef('Sleep').add_fields('float32', Doc('time', 'time to sleep in seconds'), 0)
      'dtype', Doc('dtype', 'data type of output value'),
      'DTypeEnum::Float32'))
 
-pdef('UniformRNG').add_fields('uint64', 'seed', 0)
+(pdef('UniformRNG').
+ add_fields('uint64', 'seed', 0).
+ add_fields(
+     'dtype', Doc('dtype', 'The dtype of output Tensor. Only support Float32.'),
+     'DTypeEnum::Float32'))
 
 (pdef('GaussianRNG').
  add_fields('uint64', 'seed', 0).
- add_fields('float32', 'mean', 0, 'std', 1))
+ add_fields('float32', 'mean', 0, 'std', 1).
+ add_fields(
+     'dtype', Doc('dtype', 'The dtype of output Tensor. Only support Float32.'),
+     'DTypeEnum::Float32'))
+
+(pdef('GammaRNG').
+ add_fields('uint64', 'seed', 0))
+
+(pdef('BetaRNG').
+ add_fields('uint64', 'seed', 0))
+
+(pdef('PoissonRNG').
+ add_fields('uint64', 'seed', 0))
+
+(pdef('PermutationRNG').
+ add_fields('uint64', 'seed', 0).
+ add_fields(
+     'dtype', Doc('dtype', 'The dtype of output Tensor. Int32, Int16 and '
+                  'Float32 are supported.'),
+     'DTypeEnum::Int32'))
 
 (pdef('Flip').
  add_fields('bool', 'vertical', 'false', 'horizontal', 'false'))
@@ -893,6 +928,7 @@ Relayout mode.
 * ``NCHW4`` layout: ``{N, C/4, H, W, 4}``
 * ``NCHW88`` layout: ``{N, C/8, H, W, 8}``
 * ``CHWN4`` layout: ``{C/4, H, W, N, 4}``
+* ``NCHW64`` layout: ``{N, C/64, H, W, 64}``
 
 **Float weight transformation definitions**
 
@@ -967,7 +1003,11 @@ Note: NCHW_NCHW4_WEIGHT will auto pad oc and ic, you should remove oc in later o
      'NCHW_NCHW4',
      'NCHW4_NCHW',
      'NCHW_NCHW4_WEIGHT',
-     )
+     'NCHW_NCHW64', 
+     'NCHW64_NCHW', 
+     'NCHW_NHWC', 
+     'NHWC_NCHW', 
+    )
  )
 
 (pdef('RelayoutFormat', 'Change the tensor layout format', version=1).
@@ -1053,6 +1093,16 @@ Note: NCHW_NCHW4_WEIGHT will auto pad oc and ic, you should remove oc in later o
             'sample_width', '2')
  )
 
+(pdef('Correlation').
+ add_enum_alias('Format', 'ConvolutionV0').
+ add_fields('uint32', 'kernel_size', '1').
+ add_fields('uint32', 'max_displacement', '1').
+ add_fields('uint32', 'stride1', '1').
+ add_fields('uint32', 'stride2', '1').
+ add_fields('uint32', 'pad_size', '0').
+ add_fields('bool', 'is_multiply', 'true')
+ )
+
 (pdef('DeformablePSROIPooling').
  add_fields('bool', 'no_trans', 'true').
  add_fields('float32', 'spatial_scale', 1,
@@ -1109,3 +1159,8 @@ Note: NCHW_NCHW4_WEIGHT will auto pad oc and ic, you should remove oc in later o
  add_fields('int32', 'qmin', '-2147483648').
  add_fields('int32', 'qmax', '2147483647')
  )
+(pdef('LSQ').
+ add_fields('int32', 'qmin', '-2147483648').
+ add_fields('int32', 'qmax', '2147483647')
+ )
+

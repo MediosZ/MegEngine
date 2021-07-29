@@ -10,15 +10,16 @@ import collections
 import math
 from typing import Optional, Sequence, Tuple, Union
 
-from ..core._imperative_rt.core2 import apply
+from ..core._imperative_rt.core2 import apply, dtype_promotion
 from ..core._trace_option import use_symbolic_shape
 from ..core.ops import builtin
 from ..core.ops.special import Const
-from ..core.tensor import utils
+from ..core.tensor import amp
+from ..core.tensor.utils import _normalize_axis, cast_tensors, setscalar
 from ..tensor import Tensor
 from .debug_param import get_execution_strategy
-from .elemwise import clip, exp, log, log1p
-from .tensor import broadcast_to, concat, expand_dims, reshape, squeeze
+from .elemwise import clip
+from .tensor import broadcast_to, concat, expand_dims, squeeze
 
 __all__ = [
     "argmax",
@@ -466,9 +467,13 @@ def argmin(
         0
 
     """
+    if axis is None:
+        assert not keepdims, "can not set axis=None and keepdims=True"
+        inp = inp.flatten()
+        axis = 0
+
+    axis = _normalize_axis(inp.ndim, axis, reverse=True)
     if isinstance(axis, collections.abc.Iterable):
-        axis = list(axis)
-        axis.sort(reverse=True)
 
         for ai in axis:
             op = builtin.Argmin(axis=ai)
@@ -478,11 +483,6 @@ def argmin(
                 inp = squeeze(inp, ai)
 
         return inp
-
-    if axis is None:
-        assert not keepdims, "can not set axis=None and keepdims=True"
-        inp = inp.flatten()
-        axis = 0
 
     op = builtin.Argmin(axis=axis)
     (result,) = apply(op, inp)
@@ -525,9 +525,13 @@ def argmax(
         5
 
     """
+    if axis is None:
+        assert not keepdims, "can not set axis=None and keepdims=True"
+        inp = inp.flatten()
+        axis = 0
+    axis = _normalize_axis(inp.ndim, axis, reverse=True)
+
     if isinstance(axis, collections.abc.Iterable):
-        axis = list(axis)
-        axis.sort(reverse=True)
 
         for ai in axis:
             op = builtin.Argmax(axis=ai)
@@ -537,11 +541,6 @@ def argmax(
                 inp = squeeze(inp, ai)
 
         return inp
-
-    if axis is None:
-        assert not keepdims, "can not set axis=None and keepdims=True"
-        inp = inp.flatten()
-        axis = 0
 
     op = builtin.Argmax(axis=axis)
     (result,) = apply(op, inp)
@@ -674,7 +673,7 @@ def topk(
     :param descending: if True, return the largest elements instead. Default: False
     :param kth_only: if True, only the k-th element will be returned. Default: False
     :param no_sort: if True, the returned elements can be unordered. Default: False
-    :return: tuple of two tensors `(topk_tensor, indices_of_int32)`.
+    :return: tuple of two tensors ``(topk_tensor, indices_of_int32)``
 
     Examples:
 
@@ -696,7 +695,7 @@ def topk(
 
     """
     if descending:
-        inp = -inp
+        k = -k
 
     if kth_only:
         mode = "kth_only"
@@ -710,21 +709,25 @@ def topk(
         (k,) = Const(k, dtype="int32", device=inp.device)()
 
     if len(inp.shape) == 1:
-        inp = inp.reshape(1, -1)
-        res = apply(op, inp, k)
         if kth_only:
-            tns = res[0]
+            (tns,) = apply(op, expand_dims(inp, 0), k)
+            # FIXME:
+            # could use a dedicated kernel
+            # gradient may be routed to other indices if k-th value is not unique
+            ind = argmax((tns == inp).astype("int8"))
+            tns = squeeze(tns, 0)
         else:
-            tns, ind = res[0][0], res[1][0]
+            tns, ind = apply(op, expand_dims(inp, 0), k)
+            tns = squeeze(tns, 0)
+            ind = squeeze(ind, 0)
     else:
-        res = apply(op, inp, k)
         if kth_only:
-            tns = res
+            (tns,) = apply(op, inp, k)
+            # FIXME: same as above
+            ind = argmax((expand_dims(tns, 1) == inp).astype("int8"), 1)
         else:
-            tns, ind = res[0], res[1]
+            tns, ind = apply(op, inp, k)
 
-    if descending:
-        tns = -tns
     return tns, ind
 
 
@@ -809,9 +812,17 @@ def matmul(
          [28. 40.]]
 
     """
-    remove_row, remove_col = False, False
-    inp1, inp2 = utils.convert_inputs(inp1, inp2)
+    if amp._enabled:
+        compute_mode = "float32"
+        inp1, inp2 = cast_tensors(inp1, inp2)
+    else:
+        dtype = dtype_promotion(inp1, inp2)
+        if inp1.dtype != dtype:
+            inp1 = inp1.astype(dtype)
+        if inp2.dtype != dtype:
+            inp2 = inp2.astype(dtype)
 
+    remove_row, remove_col = False, False
     dim1, dim2 = inp1.ndim, inp2.ndim
     # handle dim=1 cases, dot and matrix-vector multiplication
     if dim1 == 1 and dim2 == 1:
@@ -923,12 +934,11 @@ def dot(inp1: Tensor, inp2: Tensor) -> Tensor:
 
     """
     op = builtin.Dot()
-    inp1, inp2 = utils.convert_inputs(inp1, inp2)
     assert (
         inp1.ndim <= 1 and inp2.ndim <= 1
     ), "Input tensors for dot must be 1-dimensional or scalar"
     (result,) = apply(op, inp1, inp2)
-    utils.setscalar(result)
+    setscalar(result)
     return result
 
 
@@ -961,3 +971,16 @@ def svd(inp: Tensor, full_matrices=False, compute_uv=True) -> Tensor:
     op = builtin.SVD(full_matrices=full_matrices, compute_uv=compute_uv)
     U, sigma, V = apply(op, inp)
     return U, sigma, V
+
+
+def _has_inf(inp: Tensor) -> Tensor:
+    """
+    Check whether input contains infinite value.
+
+    :param inp: a tensor to be checked.
+    :return: a int32 scalar tensor, 0 for False and 1 for True.
+    """
+    op = builtin.CheckHasInf()
+    (oup,) = apply(op, inp.reshape(-1).astype("float32"))
+    oup._setscalar()
+    return oup

@@ -125,7 +125,7 @@ StaticDeviceMemoryManager::make_default_impl() {
 #endif  // MGB_THREAD_SAFE
 
 /* ==================== AsyncVarReleaser ==================== */
-#if MGB_CUDA || MGB_ATLAS || MGB_CAMBRICON 
+#if MGB_CUDA || MGB_ATLAS || MGB_CAMBRICON  || MGB_ROCM
 class VarNodeMemManager::AsyncVarReleaser {
     struct WaiterParam {
         CompNode cn;
@@ -248,7 +248,7 @@ bool VarNodeMemManager::ImpureMemPlanManager::check_need_realloc() {
 VarNodeMemManager::VarNodeMemManager(ComputingGraphImpl* graph)
         : m_owner_graph(graph),
           m_seq_mem_opt(graph)
-#if MGB_CUDA || MGB_ATLAS || MGB_CAMBRICON 
+#if MGB_CUDA || MGB_ATLAS || MGB_CAMBRICON  || MGB_ROCM
           ,m_asyn_var_releaser(new AsyncVarReleaser)
 #endif
 {
@@ -256,7 +256,7 @@ VarNodeMemManager::VarNodeMemManager(ComputingGraphImpl* graph)
         MGB_MARK_USED_VAR(ev);
         // async release is only used for sync between multiple comp nodes, and
         // does not wait for device to finish
-#if MGB_CUDA || MGB_ATLAS || MGB_CAMBRICON 
+#if MGB_CUDA || MGB_ATLAS || MGB_CAMBRICON  || MGB_ROCM
         m_asyn_var_releaser->wait_release_finish();
 #endif
         m_cpu_async_release_barrier.wait_zero();
@@ -298,7 +298,7 @@ VarNodeMemManager::VarNodeMemManager(ComputingGraphImpl* graph)
             on_comp_seq_error);
 
 #if MGB_ENABLE_VAR_DEV_MEM_DEFRAGMENTER &&                                   \
-        (MGB_CUDA || MGB_ATLAS || MGB_CAMBRICON ) 
+        (MGB_CUDA || MGB_ATLAS || MGB_CAMBRICON  || MGB_ROCM)
     auto on_mem_defrag_start = [this](const event::BeforeMemDefrag&) {
         m_asyn_var_releaser->wait_release_finish();
     };
@@ -1063,15 +1063,22 @@ bool VarNodeMemManager::fwd_in2out_readonly(
         return false;
     }
 
-    mgb_assert(
-            src != dest &&
-            src->comp_node().mem_node() == dest->comp_node().mem_node() &&
-            dest->m_mem_plan.valid() && src->m_mem_plan.valid() &&
-            dest->m_mem_plan.layout().eq_shape(sub.layout()) &&
-            dest->m_mem_plan.layout().dtype.size() == sub.layout().dtype.size()
-            );
-    assert_in_mem_opt_phase(
-            SeqMemOptimizer::Status::ALLOW_FWD_IN2OUT_READONLY);
+    bool cond_low_bit = dest->m_mem_plan.layout().dtype.is_low_bit() &&
+                        sub.layout().dtype.is_low_bit() &&
+                        dest->m_mem_plan.layout().dtype.low_bit() ==
+                                sub.layout().dtype.low_bit();
+    bool cond_normal =
+            !dest->m_mem_plan.layout().dtype.is_low_bit() &&
+            !sub.layout().dtype.is_low_bit() &&
+            dest->m_mem_plan.layout().dtype.size() == sub.layout().dtype.size();
+    MGB_MARK_USED_VAR(cond_low_bit);
+    MGB_MARK_USED_VAR(cond_normal);
+    mgb_assert(src != dest &&
+               src->comp_node().mem_node() == dest->comp_node().mem_node() &&
+               dest->m_mem_plan.valid() && src->m_mem_plan.valid() &&
+               dest->m_mem_plan.layout().eq_shape(sub.layout()) &&
+               (cond_normal || cond_low_bit));
+    assert_in_mem_opt_phase(SeqMemOptimizer::Status::ALLOW_FWD_IN2OUT_READONLY);
 
     if (!m_owner_graph->options().seq_opt.enable_mem_plan_opt)
         return false;
@@ -1333,15 +1340,19 @@ void VarNodeMemManager::make_dev_tensor_from_mem_plan_single(
 void VarNodeMemManager::var_alloc_with_shape(VarNode* var,
                                              const TensorShape& shape,
                                              size_t size_req) {
-    mgb_assert(var->format().is_default(),
+    bool cond_default = var->format().is_default();
+    bool cond_lowbit = var->dtype().is_quantized_lowbit() &&
+                       var->format().is_lowbit_aligned();
+    mgb_assert(cond_default || cond_lowbit,
                "dynamic shape is currently only supported for var with "
                "default format; got %s",
                var->format().to_string().c_str());
     var->shape(shape);
+    TensorLayout ly{shape, var->dtype()};
     if (size_req != 0) {
-        mgb_assert(var->dtype().size(shape.total_nr_elems()) <= size_req);
+        mgb_assert(ly.span().dist_byte() <= size_req);
     } else {
-        size_req = var->dtype().size(shape.total_nr_elems());
+        size_req = ly.span().dist_byte();
     }
 
     auto&& mplan = var->m_mem_plan;

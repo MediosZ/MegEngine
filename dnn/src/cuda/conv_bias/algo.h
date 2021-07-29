@@ -61,11 +61,18 @@ public:
         CUDA_IMPLICIT_GEMM_REORDER_FILTER_CHWN4_IMMA_INT8,
         CUDA_IMPLICIT_GEMM_UNROLL_WIDTH_CHWN4_IMMA_INT8,
         CUDA_IMPLICIT_GEMM_IMMA_NCHW32_INT8,
+        CUDA_IMPLICIT_GEMM_IMMA_NCHW64_INT4_INT4,
+        CUDA_IMPLICIT_GEMM_IMMA_NCHW64_UINT4_INT4,
+        CUDA_IMPLICIT_GEMM_IMMA_NHWC_INT4_INT4,
+        CUDA_IMPLICIT_GEMM_IMMA_NHWC_UINT4_INT4,
         CUDA_BFLOAT16,
         CUDA_IMPLICIT_GEMM_SASS_NCHW4_DOTPROD_INT8,
         CUDA_IMPLICIT_GEMM_1X1_SASS_NCHW4_DOTPROD_INT8,
         CUDA_IMPLICIT_GEMM_SASS_NCHW32_IMMA_INT8,
         CUDA_IMPLICIT_GEMM_1X1_SASS_NCHW32_IMMA_INT8,
+        CUDA_IMPLICIT_GEMM_SASS_NCHW64_IMMA_INT4_INT4,
+        CUDA_IMPLICIT_GEMM_SASS_NCHW64_IMMA_UINT4_INT4,
+        CUDA_FALLBACK_NCHW_INT4
     };
     using Mapper = std::unordered_map<AlgorithmDesc, AlgoBase*>;
 
@@ -172,6 +179,9 @@ public:
         auto ret = static_cast<AlgoAttribute>(0);
         if (m_attr.is_reproducible) {
             ret |= AlgoAttribute::REPRODUCIBLE;
+        }
+        if (m_attr.accuracy_depend_on_batch) {
+            ret |= AlgoAttribute::ACCURACY_DEPEND_ON_BATCH;
         }
         return ret;
     }
@@ -280,6 +290,9 @@ public:
         if (m_attr.is_reproducible) {
             ret |= AlgoAttribute::REPRODUCIBLE;
         }
+        if (m_attr.accuracy_depend_on_batch) {
+            ret |= AlgoAttribute::ACCURACY_DEPEND_ON_BATCH;
+        }
         return ret;
     }
 
@@ -352,7 +365,8 @@ public:
             const OperatorBase* opr) const override;
     MEGDNN_DECL_ALGO_TYPE(CUDA_MATMUL)
     AlgoAttribute attribute() const override {
-        return AlgoAttribute::REPRODUCIBLE;
+        return AlgoAttribute::REPRODUCIBLE |
+               AlgoAttribute::ACCURACY_DEPEND_ON_BATCH;
     }
 
 private:
@@ -406,7 +420,8 @@ public:
             const OperatorBase* opr) const override;
 
     AlgoAttribute attribute() const override {
-        return AlgoAttribute::REPRODUCIBLE;
+        return AlgoAttribute::REPRODUCIBLE |
+               AlgoAttribute::ACCURACY_DEPEND_ON_BATCH;
     }
 
     MEGDNN_DECL_ALGO_TYPE(CUDA_BATCHED_MATMUL)
@@ -428,7 +443,14 @@ public:
     const char* name() const override { return m_name.c_str(); }
 
     AlgoAttribute attribute() const override {
-        auto ret = static_cast<AlgoAttribute>(0);
+        auto ret = AlgoAttribute::DEFAULT;
+#define cb(attr)                               \
+    if (m_impl->contain_attribute_all(attr)) { \
+        ret |= attr;                           \
+    }
+        MEGDNN_FOREACH_ALGO_ATTRIBUTE_INHERITABLE(cb)
+#undef cb
+
         if (m_impl->contain_attribute_all(AlgoAttribute::REPRODUCIBLE)) {
             ret |= AlgoAttribute::REPRODUCIBLE;
         }
@@ -555,7 +577,10 @@ public:
         return AlgoAttribute::REPRODUCIBLE;
     }
     MEGDNN_DECL_ALGO_TYPE(CUDA_IMPLICIT_GEMM_NCHW4_DOTPROD_INT8)
-
+    std::vector<SearchItem> get_subopr_list(
+            const TensorLayoutArray& layouts,
+            const OperatorBase* opr) const override;
+ 
 private:
     void make_inner_layout(const SizeArgs& args, TensorLayout& inner_src_layout,
                            TensorLayout& inner_weight_layout,
@@ -745,6 +770,261 @@ private:
     AlgoParam m_algo_param;
     std::string m_name;
 };
+
+class ConvBiasForwardImpl::AlgoInt4NCHW64IMMAImplicitGemmBase
+        : public AlgoBase {
+public:
+    struct AlgoParam {
+        int threadblock_m;
+        int threadblock_n;
+        int threadblock_k;
+        int warp_m;
+        int warp_n;
+        int warp_k;
+    };
+
+    AlgoInt4NCHW64IMMAImplicitGemmBase(AlgoParam algo_param)
+            : m_algo_param(algo_param) {}
+
+    AlgoAttribute attribute() const override {
+        return AlgoAttribute::REPRODUCIBLE;
+    }
+    const char* name() const override { return m_name.c_str(); }
+    std::string param() const override;
+
+    bool is_available(const SizeArgs& args) const override;
+    void exec(const ExecArgs& args) const override;
+
+    std::string to_string(AlgoParam algo_param);
+
+protected:
+    virtual DTypeEnum src_dtype() const = 0;
+
+    // return filter_ptr, bias_ptr
+    virtual std::tuple<void*, void*> prepare_filter_bias(
+            const ExecArgs& args) const = 0;
+
+    // return alpha, beta, gamma, delta, theta
+    virtual std::tuple<float, float, float, float, float> get_constants(
+            const ExecArgs& args) const = 0;
+
+    virtual void do_exec(const ExecArgs& args, void* filter_ptr, void* bias_ptr,
+                         void* z_ptr, convolution::ConvParam kern_param,
+                         uint32_t nonlinear_mode, float alpha, float beta,
+                         float gamma, float delta, float theta,
+                         cudaStream_t stream) const = 0;
+
+    void reorder_filter(const ExecArgs& args, void* reordered_filter) const;
+
+    std::string m_name;
+    AlgoParam m_algo_param;
+};
+
+class ConvBiasForwardImpl::AlgoInt4Int4NCHW64IMMAImplicitGemm final
+        : public AlgoInt4NCHW64IMMAImplicitGemmBase {
+public:
+    using Base = AlgoInt4NCHW64IMMAImplicitGemmBase;
+    using AlgoParam = Base::AlgoParam;
+
+    AlgoInt4Int4NCHW64IMMAImplicitGemm(AlgoParam algo_param)
+            : Base{algo_param} {
+        m_name = ConvBias::algo_name<ConvBias::DirectParam>(
+                ssprintf("INT4_INT4_NCHW64_IMMA_IMPLICIT_GEMM_%s",
+                         to_string(m_algo_param).c_str()),
+                ConvBias::DirectParam{});
+    }
+
+    size_t get_workspace_in_bytes(const SizeArgs& args) const override;
+    size_t get_preprocess_workspace_in_bytes(
+            const SizeArgs& args) const override;
+    SmallVector<TensorLayout> deduce_preprocessed_filter_layout(
+            const SizeArgs& args) const override;
+    void exec_preprocess(const ExecArgs& args) const override;
+
+    MEGDNN_DECL_ALGO_TYPE(CUDA_IMPLICIT_GEMM_IMMA_NCHW64_INT4_INT4)
+
+private:
+    DTypeEnum src_dtype() const override { return DTypeEnum::QuantizedS4; }
+
+    std::tuple<void*, void*> prepare_filter_bias(
+            const ExecArgs& args) const override;
+
+    std::tuple<float, float, float, float, float> get_constants(
+            const ExecArgs& args) const override;
+
+    void do_exec(const ExecArgs& args, void* filter_ptr, void* bias_ptr,
+                 void* z_ptr, convolution::ConvParam kern_param,
+                 uint32_t nonlinear_mode, float alpha, float beta, float gamma,
+                 float delta, float theta, cudaStream_t stream) const override;
+};
+
+class ConvBiasForwardImpl::AlgoUInt4Int4NCHW64IMMAImplicitGemm final
+        : public AlgoInt4NCHW64IMMAImplicitGemmBase {
+public:
+    using Base = AlgoInt4NCHW64IMMAImplicitGemmBase;
+    using AlgoParam = Base::AlgoParam;
+
+    AlgoUInt4Int4NCHW64IMMAImplicitGemm(AlgoParam algo_param)
+            : Base{algo_param} {
+        m_name = ConvBias::algo_name<ConvBias::DirectParam>(
+                ssprintf("UINT4_INT4_NCHW64_IMMA_IMPLICIT_GEMM_%s",
+                         to_string(m_algo_param).c_str()),
+                ConvBias::DirectParam{});
+    }
+
+    size_t get_workspace_in_bytes(const SizeArgs& args) const override;
+    size_t get_preprocess_workspace_in_bytes(
+            const SizeArgs& args) const override;
+    SmallVector<TensorLayout> deduce_preprocessed_filter_layout(
+            const SizeArgs& args) const override;
+    void exec_preprocess(const ExecArgs& args) const override;
+
+    MEGDNN_DECL_ALGO_TYPE(CUDA_IMPLICIT_GEMM_IMMA_NCHW64_UINT4_INT4)
+
+private:
+    DTypeEnum src_dtype() const override { return DTypeEnum::Quantized4Asymm; }
+
+    std::tuple<void*, void*> prepare_filter_bias(
+            const ExecArgs& args) const override;
+
+    std::tuple<float, float, float, float, float> get_constants(
+            const ExecArgs& args) const override;
+
+    void do_exec(const ExecArgs& args, void* filter_ptr, void* bias_ptr,
+                 void* z_ptr, convolution::ConvParam kern_param,
+                 uint32_t nonlinear_mode, float alpha, float beta, float gamma,
+                 float delta, float theta, cudaStream_t stream) const override;
+
+    void update_bias(const ExecArgs& args, void* updated_bias,
+                     void* reduce_filter_ptr, void* reduce_workspace) const;
+};
+
+class ConvBiasForwardImpl::AlgoInt4NHWCIMMAImplicitGemmBase : public AlgoBase {
+public:
+    struct AlgoParam {
+        int threadblock_m;
+        int threadblock_n;
+        int threadblock_k;
+        int warp_m;
+        int warp_n;
+        int warp_k;
+        int access_size;
+    };
+
+    AlgoInt4NHWCIMMAImplicitGemmBase(AlgoParam algo_param)
+            : m_algo_param(algo_param) {}
+
+    AlgoAttribute attribute() const override {
+        return AlgoAttribute::REPRODUCIBLE;
+    }
+    const char* name() const override { return m_name.c_str(); }
+    std::string param() const override;
+
+    bool is_available(const SizeArgs& args) const override;
+    void exec(const ExecArgs& args) const override;
+
+    std::string to_string(AlgoParam algo_param);
+
+protected:
+    virtual DTypeEnum src_dtype() const = 0;
+
+    // return filter_ptr, bias_ptr
+    virtual std::tuple<void*, void*> prepare_filter_bias(
+            const ExecArgs& args) const = 0;
+
+    // return alpha, beta, gamma, delta, theta
+    virtual std::tuple<float, float, float, float, float> get_constants(
+            const ExecArgs& args) const = 0;
+
+    virtual void do_exec(const ExecArgs& args, void* filter_ptr, void* bias_ptr,
+                         void* z_ptr, convolution::ConvParam kern_param,
+                         uint32_t nonlinear_mode, float alpha, float beta,
+                         float gamma, float delta, float theta,
+                         cudaStream_t stream) const = 0;
+
+    void reorder_filter(const ExecArgs& args, int interleaved,
+                        void* reordered_filter) const;
+
+    std::string m_name;
+    AlgoParam m_algo_param;
+};
+
+class ConvBiasForwardImpl::AlgoInt4Int4NHWCIMMAImplicitGemm final
+        : public AlgoInt4NHWCIMMAImplicitGemmBase {
+public:
+    using Base = AlgoInt4NHWCIMMAImplicitGemmBase;
+    using AlgoParam = Base::AlgoParam;
+
+    AlgoInt4Int4NHWCIMMAImplicitGemm(AlgoParam algo_param) : Base{algo_param} {
+        m_name = ConvBias::algo_name<ConvBias::DirectParam>(
+                ssprintf("INT4_INT4_NHWC_IMMA_IMPLICIT_GEMM_%s",
+                         to_string(m_algo_param).c_str()),
+                ConvBias::DirectParam{});
+    }
+
+    size_t get_workspace_in_bytes(const SizeArgs& args) const override;
+    size_t get_preprocess_workspace_in_bytes(
+            const SizeArgs& args) const override;
+    SmallVector<TensorLayout> deduce_preprocessed_filter_layout(
+            const SizeArgs& args) const override;
+    void exec_preprocess(const ExecArgs& args) const override;
+
+    MEGDNN_DECL_ALGO_TYPE(CUDA_IMPLICIT_GEMM_IMMA_NHWC_INT4_INT4)
+
+private:
+    DTypeEnum src_dtype() const override { return DTypeEnum::QuantizedS4; }
+
+    std::tuple<void*, void*> prepare_filter_bias(
+            const ExecArgs& args) const override;
+
+    std::tuple<float, float, float, float, float> get_constants(
+            const ExecArgs& args) const override;
+
+    void do_exec(const ExecArgs& args, void* filter_ptr, void* bias_ptr,
+                 void* z_ptr, convolution::ConvParam kern_param,
+                 uint32_t nonlinear_mode, float alpha, float beta, float gamma,
+                 float delta, float theta, cudaStream_t stream) const override;
+};
+
+class ConvBiasForwardImpl::AlgoUInt4Int4NHWCIMMAImplicitGemm final
+        : public AlgoInt4NHWCIMMAImplicitGemmBase {
+public:
+    using Base = AlgoInt4NHWCIMMAImplicitGemmBase;
+    using AlgoParam = Base::AlgoParam;
+
+    AlgoUInt4Int4NHWCIMMAImplicitGemm(AlgoParam algo_param) : Base{algo_param} {
+        m_name = ConvBias::algo_name<ConvBias::DirectParam>(
+                ssprintf("UINT4_INT4_NHWC_IMMA_IMPLICIT_GEMM_%s",
+                         to_string(m_algo_param).c_str()),
+                ConvBias::DirectParam{});
+    }
+
+    size_t get_workspace_in_bytes(const SizeArgs& args) const override;
+    size_t get_preprocess_workspace_in_bytes(
+            const SizeArgs& args) const override;
+    SmallVector<TensorLayout> deduce_preprocessed_filter_layout(
+            const SizeArgs& args) const override;
+    void exec_preprocess(const ExecArgs& args) const override;
+
+    MEGDNN_DECL_ALGO_TYPE(CUDA_IMPLICIT_GEMM_IMMA_NHWC_UINT4_INT4)
+
+private:
+    DTypeEnum src_dtype() const override { return DTypeEnum::Quantized4Asymm; }
+
+    std::tuple<void*, void*> prepare_filter_bias(
+            const ExecArgs& args) const override;
+
+    std::tuple<float, float, float, float, float> get_constants(
+            const ExecArgs& args) const override;
+
+    void do_exec(const ExecArgs& args, void* filter_ptr, void* bias_ptr,
+                 void* z_ptr, convolution::ConvParam kern_param,
+                 uint32_t nonlinear_mode, float alpha, float beta, float gamma,
+                 float delta, float theta, cudaStream_t stream) const override;
+
+    void update_bias(const ExecArgs& args, void* updated_bias,
+                     void* reduce_filter_ptr, void* reduce_workspace) const;
+};
 #endif
 
 class ConvBiasForwardImpl::AlgoBFloat16 final : public AlgoBase {
@@ -802,6 +1082,10 @@ public:
 #endif
 #if CUDA_VERSION >= 10020
     std::vector<AlgoInt8NCHW32IMMAImplicitGemm> int8_nchw32_imma;
+    std::vector<AlgoInt4Int4NCHW64IMMAImplicitGemm> int4_int4_nchw64_imma;
+    std::vector<AlgoUInt4Int4NCHW64IMMAImplicitGemm> uint4_int4_nchw64_imma;
+    std::vector<AlgoInt4Int4NHWCIMMAImplicitGemm> int4_int4_nhwc_imma;
+    std::vector<AlgoUInt4Int4NHWCIMMAImplicitGemm> uint4_int4_nhwc_imma;
 #endif
     std::vector<std::unique_ptr<AlgoGroupConvGeneral>> gconv_refhold;
     AlgoBFloat16 bfloat16;

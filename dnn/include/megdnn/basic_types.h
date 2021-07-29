@@ -170,6 +170,7 @@ struct TensorLayout : public TensorShape {
 
 #if MEGDNN_CC_HOST
         Format();
+        Format(DType dtype);
 
         const ImplBase* impl() const { return m_impl; }
 
@@ -197,6 +198,9 @@ struct TensorLayout : public TensorShape {
 
         //! whether this is the default tensor format
         bool is_default() const;
+
+        //! whether this is the lowbit aligned to bytes tensor format
+        bool is_lowbit_aligned() const;
 
         bool operator==(Format rhs) const { return m_impl == rhs.m_impl; }
         bool operator!=(Format rhs) const { return m_impl != rhs.m_impl; }
@@ -276,6 +280,13 @@ struct TensorLayout : public TensorShape {
     void add_axis_cont_inplace(size_t axis) {
         add_axis_inplace(axis, 1, stride[axis] * shape[axis]);
     }
+
+    /*!
+     * \brief modify data type of the layout inplace
+     *
+     * By the way this API will modify the format according to the data type
+     */
+    void modify_dtype_inplace(DType dtype);
 
     /* =================== generate new layout =================== */
 
@@ -378,6 +389,9 @@ struct TensorLayout : public TensorShape {
 
     //! get lowest and highest offset reachable from this layout
     Span span() const;
+
+    //! total number of access bytes
+    size_t access_bytes() const;
 };
 
 /**

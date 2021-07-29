@@ -7,12 +7,14 @@
 # software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 import itertools
+import platform
 from functools import partial
 
 import numpy as np
 import pytest
 from utils import opr_test
 
+import megengine.amp as amp
 import megengine.core.ops.builtin as builtin
 import megengine.core.tensor.dtype as dtype
 import megengine.functional as F
@@ -20,8 +22,7 @@ from megengine import Parameter, Tensor, is_cuda_available, tensor
 from megengine.core._trace_option import use_symbolic_shape
 from megengine.core.autodiff.grad import Grad
 from megengine.core.tensor.utils import make_shape_tuple
-from megengine.distributed.helper import get_device_count_by_fork
-from megengine.jit import trace
+from megengine.device import get_device_count
 
 
 def test_where():
@@ -228,6 +229,106 @@ def test_roi_align():
     assert make_shape_tuple(inp_feat.grad.shape) == make_shape_tuple(inp_feat.shape)
 
 
+def _gen_correlation(random=True, constant=1, image_shape=(2, 1, 160, 160)):
+    if random:
+        inp_feat1 = np.random.randn(
+            image_shape[0], image_shape[1], image_shape[2], image_shape[3]
+        )
+        inp_feat2 = np.random.randn(
+            image_shape[0], image_shape[1], image_shape[2], image_shape[3]
+        )
+    else:
+        inp_feat1 = np.ones(image_shape) * constant
+        inp_feat2 = np.ones(image_shape) * constant
+
+    return tensor(inp_feat1), tensor(inp_feat2)
+
+
+def test_correlation():
+    ##test case 0 check the grad shape
+    data1, data2 = _gen_correlation()
+    grad = Grad().wrt(data1, callback=_save_to(data1))
+
+    out_feat = F.vision.correlation(
+        data1,
+        data2,
+        kernel_size=5,
+        max_displacement=4,
+        stride1=2,
+        stride2=2,
+        pad_size=2,
+        is_multiply=True,
+    )
+
+    grad(out_feat, tensor(F.ones_like(out_feat)))
+    assert make_shape_tuple(data1.grad.shape) == make_shape_tuple(data1.shape)
+
+    ##test case 1 from https://github.com/NVIDIA/flownet2-pytorch/issues/194
+    data1, data2 = _gen_correlation(random=False, image_shape=(1, 1, 3, 3))
+
+    out_feat = F.vision.correlation(
+        data1,
+        data2,
+        kernel_size=3,
+        max_displacement=0,
+        stride1=1,
+        stride2=1,
+        pad_size=0,
+        is_multiply=True,
+    )
+    assert abs(out_feat.sum() - 1) < 1e-9
+
+    ##test case 2 check same image subduction
+    data1, data2 = _gen_correlation(random=False, image_shape=(1, 1, 3, 3))
+
+    out_feat = F.vision.correlation(
+        data1,
+        data2,
+        kernel_size=3,
+        max_displacement=0,
+        stride1=1,
+        stride2=1,
+        pad_size=0,
+        is_multiply=False,
+    )
+    assert out_feat.sum() < 1e-9
+
+    ##test case 3 check same image subduction
+    data1, data2 = _gen_correlation(random=False, image_shape=(1, 1, 3, 3))
+
+    out_feat = F.vision.correlation(
+        data1,
+        data2,
+        kernel_size=3,
+        max_displacement=0,
+        stride1=1,
+        stride2=1,
+        pad_size=0,
+        is_multiply=False,
+    )
+    assert out_feat.sum() < 1e-9
+
+    ##test case 4 check correlation
+    data1, _ = _gen_correlation(
+        random=False, image_shape=(1, 1, 220, 220), constant=2.0
+    )
+    _, data2 = _gen_correlation(
+        random=False, image_shape=(1, 1, 220, 220), constant=1.0
+    )
+
+    out_feat = F.vision.correlation(
+        data1,
+        data2,
+        kernel_size=3,
+        max_displacement=2,
+        stride1=1,
+        stride2=2,
+        pad_size=0,
+        is_multiply=False,
+    )
+    assert abs(out_feat.mean() - 1) < 1e-9
+
+
 def test_roi_pooling():
     inp_feat, rois = _gen_roi_inp()
     grad = Grad().wrt(inp_feat, callback=_save_to(inp_feat))
@@ -354,9 +455,10 @@ def test_interpolate_fastpath():
     np.testing.assert_equal(out.item(), np_x.mean())
 
 
-def test_warp_perspective():
+@pytest.mark.parametrize("dt", [np.float32, np.int8, np.uint8, np.float16])
+def test_warp_perspective(dt):
     inp_shape = (1, 1, 4, 4)
-    x = tensor(np.arange(16, dtype=np.float32).reshape(inp_shape))
+    x = tensor(np.arange(16, dtype=dt).reshape(inp_shape))
     M_shape = (1, 3, 3)
     # M defines a translation: dst(1, 1, h, w) = rst(1, 1, h+1, w+1)
     M = tensor(
@@ -365,8 +467,33 @@ def test_warp_perspective():
         ).reshape(M_shape)
     )
     outp = F.vision.warp_perspective(x, M, (2, 2))
+    np.testing.assert_equal(outp.numpy(), np.array([[[[5, 6], [9, 10]]]], dtype=dt))
+
+
+@pytest.mark.parametrize("dt", [np.float32, np.int8, np.uint8, np.float16])
+def test_warp_perspective_mat_idx(dt):
+    inp_shape = (2, 1, 4, 4)
+    x = tensor(np.arange(32, dtype=dt).reshape(inp_shape))
+    M_shape = (1, 3, 3)
+    # M defines a translation: dst(1, 1, h, w) = rst(1, 1, h+1, w+1)
+    M = tensor(
+        np.array(
+            [[1.0, 0.0, 1.0], [0.0, 1.0, 1.0], [0.0, 0.0, 1.0]], dtype=np.float32
+        ).reshape(M_shape)
+    )
+    M = F.concat([M,] * 4, 0)
+    outp = F.vision.warp_perspective(x, M, (2, 2), mat_idx=[0, 1, 1, 0])
     np.testing.assert_equal(
-        outp.numpy(), np.array([[[[5.0, 6.0], [9.0, 10.0]]]], dtype=np.float32)
+        outp.numpy(),
+        np.array(
+            [
+                [[[5, 6], [9, 10]]],
+                [[[21, 22], [25, 26]]],
+                [[[21, 22], [25, 26]]],
+                [[[5, 6], [9, 10]]],
+            ],
+            dtype=dt,
+        ),
     )
 
 
@@ -485,7 +612,7 @@ def test_nms():
 
 
 @pytest.mark.skipif(
-    get_device_count_by_fork("gpu") > 0, reason="cuda does not support nchw int8"
+    get_device_count("gpu") > 0, reason="cuda does not support nchw int8"
 )
 def test_conv_bias():
     inp_scale = 1.5
@@ -587,9 +714,7 @@ def test_conv_bias():
     run(10, 36, 8, 46, 26, 2, 2, 2, 1, 1, 2, True, "relu")
 
 
-@pytest.mark.skipif(
-    get_device_count_by_fork("gpu") > 0, reason="no int8 algorithm on cuda"
-)
+@pytest.mark.skipif(get_device_count("gpu") > 0, reason="no int8 algorithm on cuda")
 def test_batch_conv_bias():
     inp_scale = 1.5
     w_scale = 2.5
@@ -640,6 +765,27 @@ def test_batch_conv_bias():
     run(1, 4, 4, 5, 5, 3, 3, 0, 0, 1, 1, True)
 
 
+def test_conv2d_io16c32():
+    amp.enabled = True
+    inp = tensor(np.random.randn(1, 3, 224, 224), dtype=np.float32)
+    weight = tensor(np.random.randn(64, 3, 7, 7), dtype=np.float32)
+    out = F.conv2d(inp, weight, None, (2, 2), (3, 3), (1, 1), 1)
+    amp.enabled = False
+    expected = F.conv2d(
+        inp.astype("float16"),
+        weight.astype("float16"),
+        None,
+        (2, 2),
+        (3, 3),
+        (1, 1),
+        1,
+        compute_mode="float32",
+    )
+    assert out.dtype == np.float16
+    assert expected.dtype == np.float16
+    np.testing.assert_allclose(out.numpy(), expected.numpy())
+
+
 def test_conv2d_zero_stride_numpy_array():
     inp = np.random.randn(3, 224, 224).astype(np.float32)
     inp = inp[np.newaxis, :]
@@ -660,8 +806,8 @@ def test_conv3d_zero_stride_numpy_array():
 
 
 def test_conv1d():
-    inp = tensor(np.ones((16,), dtype=np.float32).reshape(2, 2, 4))
-    weight = tensor(np.ones((12,), dtype=np.float32).reshape(3, 2, 2))
+    inp = tensor(np.ones((2, 2, 4), dtype=np.float32))
+    weight = tensor(np.ones((3, 2, 2), dtype=np.float32))
     out = F.conv1d(inp, weight, None, 2, 0, 1, 1)
     np.testing.assert_equal(
         out.numpy(),
@@ -671,9 +817,31 @@ def test_conv1d():
     )
 
 
+def test_batchnorm2d_io16c32():
+    amp.enabled = True
+    inp = tensor(np.random.randn(1, 3, 224, 224), dtype=np.float32)
+    weight = tensor(np.ones((1, 3, 1, 1)), dtype=np.float32)
+    bias = tensor(np.zeros((1, 3, 1, 1)), dtype=np.float32)
+
+    out = F.batch_norm(inp, weight=weight, bias=bias, training=True, inplace=False)
+
+    amp.enabled = False
+    expected = F.batch_norm(
+        inp.astype("float16"),
+        weight=weight,
+        bias=bias,
+        training=True,
+        inplace=False,
+        compute_mode="float32",
+    )
+    assert out.dtype == np.float16
+    assert expected.dtype == np.float16
+    np.testing.assert_allclose(out.numpy(), expected.numpy())
+
+
 def test_conv3d():
-    inp = tensor(np.ones((256,), dtype=np.float32).reshape(2, 2, 4, 4, 4))
-    weight = tensor(np.ones((48,), dtype=np.float32).reshape(3, 2, 2, 2, 2))
+    inp = tensor(np.ones((2, 2, 4, 4, 4), dtype=np.float32))
+    weight = tensor(np.ones((3, 2, 2, 2, 2), dtype=np.float32))
     out = F.conv3d(inp, weight, None, 2, 0, 1, 1)
     print(out.numpy().shape)
     np.testing.assert_equal(
@@ -785,3 +953,80 @@ def test_assert_not_equal():
     y = F.zeros(shape, dtype=np.float32) + 1.1
     with pytest.raises(RuntimeError):
         z = F.utils._assert_equal(x, y)
+
+
+def test_neg_axis():
+    x = tensor(np.random.normal(0, 1, (32, 5)))
+
+    y = F.argmax(x, axis=-1)
+    yy = F.argmax(x, axis=1)
+    np.testing.assert_equal(y.numpy(), yy.numpy())
+
+    y = F.argmax(x, axis=(-1, -2))
+    yy = F.argmax(x, axis=(0, 1))
+    np.testing.assert_equal(y.numpy(), yy.numpy())
+
+    y = F.argmin(x, axis=(-1, -2))
+    yy = F.argmin(x, axis=(0, 1))
+    np.testing.assert_equal(y.numpy(), yy.numpy())
+
+
+def test_sliding_window():
+    N, C, H, W = 2, 3, 7, 8
+    inp = np.random.normal(size=(N, C, H, W))
+    ph, pw = 1, 2
+    sh, sw = 2, 1
+    wh, ww = 3, 2
+    dh, dw = 1, 3
+    s = lambda i, p, s, d, w: (i + p * 2 - (w - 1) * d - 1) // s + 1
+    inp_pad = np.zeros((N, C, H + ph * 2, W + pw * 2))
+    inp_pad[:, :, ph : H + ph, pw : W + pw] = inp
+    gt_out = np.empty(
+        (N, C, s(H, ph, sh, dh, wh), s(W, pw, sw, dw, ww), wh, ww), dtype=np.float32
+    )
+    for n, c, oh, ow in itertools.product(*map(range, gt_out.shape[:4])):
+        ih, iw = oh * sh, ow * sw
+        gt_out[n, c, oh, ow, :] = inp_pad[
+            n, c, ih : ih + (wh - 1) * dh + 1 : dh, iw : iw + (ww - 1) * dw + 1 : dw
+        ]
+
+    out = F.sliding_window(
+        tensor(inp), (wh, ww), padding=(ph, pw), stride=(sh, sw), dilation=(dh, dw)
+    )
+    np.testing.assert_equal(gt_out, out.numpy())
+
+
+def test_sliding_window_transpose():
+    N, C, H, W = 2, 3, 7, 8
+    ph, pw = 1, 2
+    sh, sw = 2, 1
+    wh, ww = 3, 2
+    dh, dw = 1, 3
+    s = lambda i, p, s, d, w: (i + p * 2 - (w - 1) * d - 1) // s + 1
+    inp = np.random.normal(
+        size=(N, C, s(H, ph, sh, dh, wh), s(W, pw, sw, dw, ww), wh, ww)
+    ).astype(np.float32)
+    gt_out = np.zeros((N, C, H, W), dtype=np.float32)
+
+    for n, c in itertools.product(*map(range, inp.shape[:2])):
+        oh = 0
+        for ih in range(-ph, H + ph - dh * (wh - 1), sh):
+            ow = 0
+            for iw in range(-pw, W + pw - dw * (ww - 1), sw):
+                for kh, kw in itertools.product(*map(range, inp.shape[-2:])):
+                    ih2 = ih + dh * kh
+                    iw2 = iw + dw * kw
+                    if ih2 >= 0 and ih2 < H and iw2 >= 0 and iw2 < W:
+                        gt_out[n, c, ih2, iw2] += inp[n, c, oh, ow, kh, kw]
+                ow += 1
+            oh += 1
+
+    out = F.sliding_window_transpose(
+        tensor(inp),
+        (H, W),
+        (wh, ww),
+        padding=(ph, pw),
+        stride=(sh, sw),
+        dilation=(dh, dw),
+    )
+    np.testing.assert_equal(gt_out, out.numpy())

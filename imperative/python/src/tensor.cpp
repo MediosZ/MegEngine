@@ -13,6 +13,9 @@
 #include "megbrain/common.h"
 #include "megbrain/imperative/ops/utility.h"
 #include "megbrain/imperative/ops/backward_graph.h"
+#include "megbrain/imperative/ops/autogen.h"
+#include "megbrain/imperative/profiler.h"
+#include "megbrain/opr/io.h"
 
 #include "./tensor.h"
 #include "./grad.h"
@@ -36,50 +39,54 @@ namespace mgb::imperative::python {
 
 interpreter::Interpreter::Channel* interpreter_for_py;
 
-PyObject *cpp_apply_with_tracing, *cpp_apply_const_with_tracing,
-           *cpp_apply_compiled_mode, *cpp_apply_const_compiled_mode;
-
+PyObject *cpp_apply_with_tracing, *cpp_apply_const_with_tracing;
 PyObject *cpp_apply_backward_varnode;
 
+std::shared_ptr<Tensor> make_const(imperative::TensorPtr value) {
+    if (!(ApplyContext::global_enable & Tensor::Flags::TRACE)) {
+        return std::make_shared<Tensor>(interpreter_for_py->put(value->dev_tensor()));
+    }
+    py::tuple tup(6);
+    auto data = value->get_value();
+    tup[0] = py::reinterpret_steal<py::array>(ndarray_from_tensor(data, npy::ShareType::MUST_SHARE));
+    tup[1] = value->dtype();
+    tup[2] = value->comp_node();
+    tup[3] = true;
+    tup[4] = false;
+    tup[5] = py::none{};
+    auto py_ret = PyObject_Call(cpp_apply_const_with_tracing, tup.ptr(), nullptr);
+    if (!py_ret) throw py::error_already_set();
+    auto py_list = py::reinterpret_steal<py::list>(py_ret);
+    auto* tensor_wrapper = TensorWrapper::try_cast(py_list[0].ptr());
+    auto tensor = tensor_wrapper->m_tensor;
+    return tensor_wrapper->m_tensor;
+}
 
-#define REGISTE_APPLY_FUNC(mode)                                    \
-        void set_##mode(py::object pyf) {                           \
-            mode = pyf.ptr();                                       \
+#define REGISTE_APPLY_FUNC(mode)            \
+        void set_##mode(py::object pyf) {   \
+            mode = pyf.ptr();               \
         }
 
 REGISTE_APPLY_FUNC(cpp_apply_with_tracing)
 REGISTE_APPLY_FUNC(cpp_apply_const_with_tracing)
-REGISTE_APPLY_FUNC(cpp_apply_compiled_mode)
-REGISTE_APPLY_FUNC(cpp_apply_const_compiled_mode)
 REGISTE_APPLY_FUNC(cpp_apply_backward_varnode)
 
 #undef REGISTE_APPLY_FUNC
 
-bool is_tracing = false;
-bool is_compiled = false;
+Tensor::flags_t ApplyContext::global_disable = 0;
+Tensor::flags_t ApplyContext::global_enable = 0;
 
-#define SET_UNSET_PROP(mode)    \
-    void set_##mode() {         \
-        is_##mode = true;       \
-    }                           \
-    void unset_##mode() {       \
-        is_##mode = false;      \
-    }                           \
-
-SET_UNSET_PROP(tracing)
-SET_UNSET_PROP(compiled)
-
-#undef SET_UNSET_PROP
+void set_tracing() { ApplyContext::global_enable |= Tensor::Flags::TRACE; }
+void unset_tracing() { ApplyContext::global_enable &= ~Tensor::Flags::TRACE; }
 
 bool skip_tracing = false;
-
-Tensor::flags_t ApplyContext::global_disable = 0;
 
 apply_result_t apply(ApplyContext& ctx) {
     // emulating scalar should be put to specific op's apply, e.g.,
     // elementwise, reduce, typecvt. Currently it's still handled at python
     // side. It could be move to C++ side if it has an impact on performance
     auto flags = ctx.flags & ~ApplyContext::global_disable;
+    flags = flags | ApplyContext::global_enable;
 
     if (flags & Tensor::Flags::SCALAR) {
         // TODO: emulate scalar
@@ -118,9 +125,18 @@ apply_result_t apply(ApplyContext& ctx) {
             handles[i] = ctx.args[i]->m_handle.get();
         }
 
+        apply_result_t outputs;
+
+        // fast copy without really applying
+        if (ctx.op->same_type<FastpathCopy>()) {
+            mgb_assert(ctx.nargs == 1);
+            outputs.reserve(ctx.nargs);
+            outputs.emplace_back(std::make_shared<Tensor>(ctx.args[0]->m_handle));
+            return outputs;
+        }
+
         auto output_handles = interpreter_for_py->apply_op(ctx.op, handles);
 
-        apply_result_t outputs;
         outputs.reserve(output_handles.size());
         for (auto h : output_handles) {
             outputs.emplace_back(std::make_shared<Tensor>(h));
@@ -147,6 +163,12 @@ PyObject* py_apply(PyObject* self, PyObject*const* args, size_t nargs/* , PyObje
         auto* op = args[0];
 
         PyTypeObject* pytype = args[1]->ob_type;
+
+        // check if pytype is Parameter(and all other python Tensor's derived class),
+        // if yes, using it's tp_base(python Tensor)
+        if (TensorWrapper::wrap_t::type().same_pytype(pytype->tp_base->tp_base)) {
+            pytype = pytype->tp_base;
+        }
         ++args;
         --nargs;
 
@@ -157,14 +179,11 @@ PyObject* py_apply(PyObject* self, PyObject*const* args, size_t nargs/* , PyObje
         ctx.args = &tensors[0];
         ctx.nargs = nargs;
         ctx.pytype = pytype;
-        if (ctx.op->same_type<BackwardGraph>()) {
-            ctx.backward = true;
-        }
 
         if (py::isinstance<PySymbolVar>(py::handle(args[0]))){
             SmallVector<cg::VarNode*> vinputs(nargs);
             for (size_t i = 0; i < nargs; ++i) {
-                    vinputs[i] = py::handle(args[i]).cast<PySymbolVar*>()->m_node;   
+                vinputs[i] = py::handle(args[i]).cast<PySymbolVar*>()->m_node;
             }
             auto op = ctx.op.get();
             auto rst = OpDef::apply_on_var_node(*op, vinputs);
@@ -186,10 +205,6 @@ PyObject* py_apply(PyObject* self, PyObject*const* args, size_t nargs/* , PyObje
                         ctx.op->make_name().c_str(), Py_TYPE(args[i])->tp_name).c_str());
                 return nullptr;
             }
-        }
-
-        if (is_tracing) {
-            ctx.flags |= Tensor::Flags::TRACE;
         }
 
         auto outputs = apply(ctx);
@@ -253,15 +268,8 @@ TensorWrapper::TensorWrapper(PyObject* args, PyObject* kwargs) {
             if (tup[nargs - 1].ptr() != Py_None) name = tup[nargs - 1].cast<std::string>();
 
             // const op
-            if (is_const && is_tracing) {
-                PyObject *pyf;
-                if (is_compiled) {
-                    pyf = cpp_apply_const_compiled_mode;
-                } else {
-                    pyf = cpp_apply_const_with_tracing;
-                }
-
-                auto py_ret = PyObject_Call(pyf, tup.ptr(), nullptr);
+            if (is_const && (ApplyContext::global_enable == Tensor::Flags::TRACE)) {
+                auto py_ret = PyObject_Call(cpp_apply_const_with_tracing, tup.ptr(), nullptr);
                 if (!py_ret) throw py::error_already_set();
                 auto py_list = py::reinterpret_steal<py::list>(py_ret);
                 if (auto* t = try_cast(py_list[0].ptr())) {
@@ -271,10 +279,7 @@ TensorWrapper::TensorWrapper(PyObject* args, PyObject* kwargs) {
             }
 
             interpreter::Interpreter::Handle handle;
-            constexpr auto size_threshhold = TensorShape::MAX_NDIM;
-            if (data.size() > size_threshhold) {
-                handle = interpreter_for_py->put(npy::np2tensor(data.ptr(), npy::Meth::borrow(cn), dtype), no_cache);
-            } else {
+            {
                 HostTensorND ret(cn);
                 handle = interpreter_for_py->put(npy::np2tensor(data.ptr(), npy::Meth::copy_into(&ret), dtype), no_cache);
             }
@@ -304,11 +309,6 @@ REGISTE_TENSORWRAPPER_FUNC(int64_t, mixin_handle)
 REGISTE_TENSORWRAPPER_FUNC(bool, recording)
 
 #undef REGISTE_TENSORWRAPPER_FUNC
-
-
-PyObject* TensorWrapper::copied() {
-    return py::cast(m_tensor->m_trace_info.copied).release().ptr();
-}
 
 
 #define REGISTE_TENSORWRAPPER_PYOBJECT_FUNC(member)                                 \
@@ -385,12 +385,18 @@ PyObject* TensorWrapper::shape() {
     TensorShape shape;
     if (m_tensor->m_var) {      // get shape from m_var
         auto&& mgr = m_tensor->m_var->owner_graph()->static_infer_manager();
+        auto&& type = mgr.get_infer_type(m_tensor->m_var);
+        using InferType = cg::static_infer::InferType;
+        if (!(type.shape & (InferType::CONST | InferType::RT_STATIC))) {
+            Py_RETURN_NONE;
+        }
         auto *tshp = mgr.infer_shape_fallible(m_tensor->m_var);
         if (!tshp) {
             Py_RETURN_NONE;
         }
         shape = *tshp;
     } else {
+        py::gil_scoped_release _;
         shape = m_tensor->shape();
     }
 
@@ -767,7 +773,7 @@ CompNode _get_device(PyObject*const* args, size_t nargs) {
         }
     }
     if (!valid) {
-        mgb_assert(0, "expect at least 1 device");
+        return CompNode::load(get_default_device());
     }
     Py_XDECREF(tuple);
     return cn;
@@ -844,7 +850,6 @@ void init_tensor(py::module m) {
         .def<&TensorWrapper::reset_varnode>("_reset_varnode")
         .def<&TensorWrapper::_use_cnt>("_use_cnt")
         .def_getset<&TensorWrapper::varnode>("_varnode")
-        .def_getset<&TensorWrapper::copied>("_copied")
         .def_getset<&TensorWrapper::mixin_handle, &TensorWrapper::set_mixin_handle>("_mixin_handle")
         .def_getset<&TensorWrapper::recording, &TensorWrapper::set_recording>("_recording")
         .def_getset<&TensorWrapper::handle, &TensorWrapper::set_handle>("_handle")
@@ -879,6 +884,24 @@ void init_tensor(py::module m) {
                                              ->static_infer_manager();
                         return mgr.infer_shape_fallible(v->m_node);
                     })
+            .def("numpy", [](PySymbolVar* v){
+                auto&& mgr = v->m_node->owner_graph()->static_infer_manager();
+                auto&& type = mgr.get_infer_type(v->m_node);
+                using InferType = cg::static_infer::InferType;
+                if (!(type.value & (InferType::CONST | InferType::RT_STATIC))) {
+                    throw py::value_error("value invalid!");
+                }
+                auto* val = mgr.infer_value_fallible(v->m_node);
+                if (!val) {
+                    throw py::value_error("value invalid!");
+                }
+                auto np_val = py::cast(*val).attr("numpy")();
+                if (v->is_scalar) {
+                    return py::object(py::array(np_val).squeeze());
+                }
+                return np_val; 
+
+            })
             .def("_isscalar", [](PySymbolVar* v) { return v->is_scalar; })
             .def("_setscalar",
                  [](PySymbolVar* v) { return v->is_scalar = true; })
@@ -900,8 +923,12 @@ void init_tensor(py::module m) {
         }
     }
 
+    static constexpr auto sync_py_task_q = []{
+        py_task_q.wait_all_task_finish();
+    };
+
     m.def("set_option",
-          [](std::string name, int value){ interpreter_for_py->set_option(name, value); });
+          [](std::string name, size_t value){ interpreter_for_py->set_option(name, value); });
     m.def("get_option",
           [](std::string name){ return interpreter_for_py->get_option(name); });
     m.def("_set_swap_flag",
@@ -925,27 +952,45 @@ void init_tensor(py::module m) {
     m.def("pop_scope",
           [](std::string name) { interpreter_for_py->pop_scope(name); });
     m.def("start_profile",
-          [](std::unordered_map<std::string, int> option) { return interpreter_for_py->start_profile(option); });
+          [](imperative::Profiler::options_t options) {
+              interpreter_for_py->sync();
+              imperative::Profiler::load_options(std::move(options));
+              imperative::Profiler::start_profile();
+              interpreter_for_py->start_profile();
+          }, py::call_guard<py::gil_scoped_release>());
     m.def("stop_profile",
-          [](std::string basename, std::string format) { interpreter_for_py->stop_profile(basename, format); });
+          []() -> std::function<void(std::string, std::string)> {
+              interpreter_for_py->stop_profile();
+              interpreter_for_py->sync();
+              imperative::Profiler::stop_profile();
+              auto results = imperative::Profiler::collect();
+              auto options = imperative::Profiler::get_options();
+              return [results=std::move(results), options=std::move(options)](std::string basename, std::string format){
+                  imperative::Profiler::dump_profile(basename, format, results, options);
+              };
+          }, py::call_guard<py::gil_scoped_release>());
     m.def("sync",
           []() {
               interpreter_for_py->sync();
-              py_task_q.wait_all_task_finish();
-          },
-          py::call_guard<py::gil_scoped_release>());
+              sync_py_task_q();
+          }, py::call_guard<py::gil_scoped_release>());
     m.def("full_sync",
           []() {
               interpreter_for_py->sync();
               CompNode::sync_all();
-              py_task_q.wait_all_task_finish();
-          },
-          py::call_guard<py::gil_scoped_release>());
+              sync_py_task_q();
+          }, py::call_guard<py::gil_scoped_release>());
+    m.def("close",
+          []() {
+              interpreter_for_py->close();
+              sync_py_task_q();
+          }, py::call_guard<py::gil_scoped_release>());
 
     py::handle grad_key_type = GradKeyWrapper::wrap_t::type()
         .def<&GradKeyWrapper::attach>("attach")
         .def<&GradKeyWrapper::is_attached_to>("is_attached_to")
         .def_getset<&GradKeyWrapper::get_name, &GradKeyWrapper::set_name>("name")
+        .def_getset<&GradKeyWrapper::get_priority, &GradKeyWrapper::set_priority>("priority")
         .finalize();
     if (!grad_key_type) throw py::error_already_set();
     py::setattr(m, "GradKey", grad_key_type);
@@ -953,8 +998,6 @@ void init_tensor(py::module m) {
 
     m.def("set_cpp_apply_with_tracing", &set_cpp_apply_with_tracing);
     m.def("set_cpp_apply_const_with_tracing", &set_cpp_apply_const_with_tracing);
-    m.def("set_cpp_apply_compiled_mode", &set_cpp_apply_compiled_mode);
-    m.def("set_cpp_apply_const_compiled_mode", &set_cpp_apply_const_compiled_mode);
     m.def("set_cpp_apply_backward_varnode", &set_cpp_apply_backward_varnode);
 
     m.attr("skip_tracing") = &skip_tracing;
@@ -971,8 +1014,9 @@ void init_tensor(py::module m) {
 
     m.def("set_tracing", &set_tracing);
     m.def("unset_tracing", &unset_tracing);
-    m.def("set_compiled", &set_compiled);
-    m.def("unset_compiled", &unset_compiled);
+    m.def("set_allow_higher_order_directive", [](bool value){
+        GradKey::allow_higher_order_directive = value;
+    });
 }
 
 #undef MGE_PY_INTERFACE

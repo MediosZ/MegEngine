@@ -115,10 +115,21 @@ class MemAllocImplHelper: virtual public MemAllocBase {
         //! get free mem for this allocator, without locking
         FreeMemStat get_free_memory_self_unsafe();
 
+#if !MGB_BUILD_SLIM_SERVING
+        size_t get_max_block_size_available_unsafe();
+
+        std::pair<size_t, size_t> get_free_left_and_right(size_t begin_ptr, size_t end_ptr) override;
+#endif
+
     public:
         void print_memory_state() override;
 
         FreeMemStat get_free_memory() override final;
+
+#if !MGB_BUILD_SLIM_SERVING
+        size_t get_max_block_size_available() override final;
+#endif
+
 };
 
 

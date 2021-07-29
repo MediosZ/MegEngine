@@ -21,6 +21,13 @@
 #include <cudnn.h>
 #include "test/cuda/benchmark.h"
 
+namespace {
+#define V1(v) #v
+#define V(v) V1(v)
+#define DEF_NAME(NAME) \
+#NAME "v" V(CUDNN_MAJOR) "." V(CUDNN_MINOR) "." V(CUDNN_PATCHLEVEL)
+}  // namespace
+
 namespace megdnn {
 namespace test {
 
@@ -242,16 +249,45 @@ TEST_F(CUDA, POOLING_BACKWARD)
                 .exec(TensorShapeArray{ilayout, olayout, olayout, ilayout});
     }
 }
+TEST_F(CUDA, POOLING_FORWARD_NCHW_Q4) {
+    require_compute_capability(7, 5);
+    using Param = param::Pooling;
+    Checker<Pooling> checker(handle_cuda());
+    Param param{Param::Mode::MAX, 0, 0, 2, 2, 2, 2};
+    checker.set_dtype(0, dtype::QuantizedS4(3.1415926f));
+    param.format = Param::Format::NCHW;
+    checker.set_param(param).exec({{20, 64, 22, 33}, {}});
+    param.mode = Param::Mode::AVERAGE;
+    checker.set_param(param).exec({{20, 96, 22, 33}, {}});
+    param.mode = Param::Mode::AVERAGE_COUNT_EXCLUDE_PADDING;
+    checker.set_param(param).exec({{20, 24, 22, 33}, {}});
+    checker.set_dtype(0, dtype::Quantized4Asymm(3.1415926f, 3));
+    param.format = Param::Format::NCHW;
+    checker.set_param(param).exec({{20, 64, 22, 33}, {}});
+    param.mode = Param::Mode::AVERAGE;
+    checker.set_param(param).exec({{20, 96, 22, 33}, {}});
+    param.mode = Param::Mode::AVERAGE_COUNT_EXCLUDE_PADDING;
+    checker.set_param(param).exec({{20, 24, 22, 33}, {}});
+}
 
-TEST_F(CUDA, POOLING_FORWARD_NCHW4) {
+TEST_F(CUDA, POOLING_FORWARD_NCHW4_NCHW32) {
     require_compute_capability(7, 5);
     using Param = param::Pooling;
     Checker<Pooling> checker(handle_cuda());
     Param param;
     checker.set_dtype(0, dtype::QuantizedS8(0.1f));
-    param.format = Param::Format::NCHW4;
     checker.set_epsilon(1 + 1e-3);
-    checker.set_param(param).exec({{20, 3, 50, 50, 4}, {}});
+    checker.set_before_exec_callback(
+            AlgoChecker<PoolingForward>(DEF_NAME(cudnnForward)));
+    for (auto format : {Param::Format::NCHW4, Param::Format::NCHW32}) {
+        param.format = format;
+        param.mode = Param::Mode::MAX;
+        checker.set_param(param).exec({{4, 3, 28, 28, 32}, {}});
+        param.mode = Param::Mode::AVERAGE;
+        checker.set_param(param).exec({{4, 3, 28, 28, 64}, {}});
+        param.mode = Param::Mode::AVERAGE_COUNT_EXCLUDE_PADDING;
+        checker.set_param(param).exec({{4, 3, 28, 28, 32}, {}});
+    }
 }
 
 #if CUDNN_VERSION >= 7500
@@ -264,11 +300,83 @@ TEST_F(CUDA, POOLING_FORWARD_NCHW32) {
     auto i8_max = std::numeric_limits<int8_t>().max();
     UniformIntRNG int_rng{i8_min, i8_max};
     checker.set_dtype(0, dtype::QuantizedS8(0.1f));
+    checker.set_before_exec_callback(
+            AlgoChecker<PoolingForward>("CUDA_NCHW32"));
     param.format = Param::Format::NCHW32;
     checker.set_epsilon(1e-3).set_rng(0, &int_rng);
     checker.set_param(param).exec({{64, 8, 28, 28, 32}, {}});
+    param.mode = Param::Mode::AVERAGE;
+    checker.set_param(param).exec({{64, 8, 28, 28, 64}, {}});
+    param.mode = Param::Mode::AVERAGE_COUNT_EXCLUDE_PADDING;
+    checker.set_param(param).exec({{64, 8, 28, 28, 64}, {}});
 }
 #endif
+
+TEST_F(CUDA, POOLING_FORWARD_NCHW64_Q4) {
+    require_compute_capability(7, 5);
+    using Param = param::Pooling;
+    Checker<Pooling> checker(handle_cuda());
+    Param param{Param::Mode::MAX, 1, 1, 2, 2, 2, 2};
+    UniformIntRNG int_rng{-8, 7};
+    checker.set_dtype(0, dtype::QuantizedS4(1.f));
+    param.format = Param::Format::NCHW64;
+    checker.set_epsilon(1e-3).set_rng(0, &int_rng);
+    checker.set_param(param).exec({{4, 8, 28, 28, 64}, {}});
+    param.mode = Param::Mode::AVERAGE;
+    checker.set_param(param).exec({{4, 8, 28, 28, 64}, {}});
+    param.mode = Param::Mode::AVERAGE_COUNT_EXCLUDE_PADDING;
+    checker.set_param(param).exec({{4, 8, 28, 28, 64}, {}});
+}
+
+TEST_F(CUDA, POOLING_FORWARD_NCHW64_U4) {
+    require_compute_capability(7, 5);
+    using Param = param::Pooling;
+    Checker<Pooling> checker(handle_cuda());
+    Param param{Param::Mode::MAX, 1, 1, 2, 2, 2, 2};
+    UniformIntRNG int_rng{0, 15};
+    checker.set_dtype(0, dtype::Quantized4Asymm(1.f, 3));
+    param.format = Param::Format::NCHW64;
+    checker.set_epsilon(1e-3).set_rng(0, &int_rng);
+    checker.set_param(param).exec({{4, 8, 28, 28, 64}, {}});
+    param.mode = Param::Mode::AVERAGE;
+    checker.set_param(param).exec({{4, 8, 28, 28, 64}, {}});
+    param.mode = Param::Mode::AVERAGE_COUNT_EXCLUDE_PADDING;
+    checker.set_param(param).exec({{4, 8, 28, 28, 64}, {}});
+}
+
+TEST_F(CUDA, POOLING_FORWARD_NHWC_Q4) {
+    require_compute_capability(7, 5);
+    using Param = param::Pooling;
+    Checker<Pooling> checker(handle_cuda());
+    Param param{Param::Mode::MAX, 1, 1, 2, 2, 2, 2};
+    UniformIntRNG int_rng{-8, 7};
+    checker.set_dtype(0, dtype::QuantizedS4(1.f));
+    param.format = Param::Format::NHWC;
+    checker.set_epsilon(1e-3).set_rng(0, &int_rng);
+    checker.set_param(param).exec({{2, 28, 28, 16}, {}});
+    checker.set_param(param).exec({{2, 177, 233, 16}, {}});
+    param.mode = Param::Mode::AVERAGE;
+    checker.set_param(param).exec({{3, 13, 28, 32}, {}});
+    param.mode = Param::Mode::AVERAGE_COUNT_EXCLUDE_PADDING;
+    checker.set_param(param).exec({{4, 29, 28, 64}, {}});
+}
+
+TEST_F(CUDA, POOLING_FORWARD_NHWC_U4) {
+    require_compute_capability(7, 5);
+    using Param = param::Pooling;
+    Checker<Pooling> checker(handle_cuda());
+    Param param{Param::Mode::MAX, 1, 1, 2, 2, 2, 2};
+    UniformIntRNG int_rng{0, 15};
+    checker.set_dtype(0, dtype::Quantized4Asymm(1.f, 3));
+    param.format = Param::Format::NHWC;
+    checker.set_epsilon(1e-3).set_rng(0, &int_rng);
+    checker.set_param(param).exec({{2, 28, 28, 16}, {}});
+    checker.set_param(param).exec({{2, 177, 233, 16}, {}});
+    param.mode = Param::Mode::AVERAGE;
+    checker.set_param(param).exec({{3, 13, 28, 32}, {}});
+    param.mode = Param::Mode::AVERAGE_COUNT_EXCLUDE_PADDING;
+    checker.set_param(param).exec({{4, 29, 28, 64}, {}});
+}
 
 TEST_F(CUDA, POOLING_FORWARD_CHWN4) {
     require_compute_capability(6, 1);
@@ -300,6 +408,7 @@ TEST_F(CUDA, POOLING_FORWARD_INT8_NCHW4) {
     UniformIntRNG int_rng{i8_min, i8_max};
     checker.set_dtype(0, dtype::QuantizedS8(0.1f));
     param.format = Param::Format::NCHW4;
+    checker.set_before_exec_callback(AlgoChecker<PoolingForward>("CUDA_NCHW4"));
     for (auto mode : {Param::Mode::MAX, Param::Mode::AVERAGE,
                       Param::Mode::AVERAGE_COUNT_EXCLUDE_PADDING}) {
         param.mode = mode;
@@ -319,6 +428,8 @@ TEST_F(CUDA, POOLING_FORWARD_INT8_NCHW32) {
     auto i8_max = std::numeric_limits<int8_t>().max();
     UniformIntRNG int_rng{i8_min, i8_max};
     checker.set_dtype(0, dtype::QuantizedS8(0.1f));
+    checker.set_before_exec_callback(
+            AlgoChecker<PoolingForward>("CUDA_NCHW32"));
     param.format = Param::Format::NCHW32;
     for (auto mode : {Param::Mode::MAX, Param::Mode::AVERAGE,
                       Param::Mode::AVERAGE_COUNT_EXCLUDE_PADDING}) {

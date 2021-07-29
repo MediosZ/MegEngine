@@ -35,9 +35,9 @@ std::shared_ptr<Tensor> broadcast_to(Tensor* x, Tensor* s) {
     return python::apply(op, x, s)[0];
 }
 
-std::shared_ptr<Tensor> make_tensor(CompNode cn, Tensor* shape, float v = 0) {
-    HostTensorND scalar{cn, {{1}, dtype::Float32()}};
-    scalar.ptr<float>()[0] = v;
+std::shared_ptr<Tensor> make_empty_tensor(CompNode cn, Tensor* shape, DType dtype) {
+    HostTensorND scalar{cn, {{1}, dtype}};
+    std:memset(scalar.raw_ptr(), 0, dtype.size());
     interpreter::Interpreter::Handle handle = interpreter_for_py->put(scalar, false);
     auto&& t = std::make_shared<Tensor>(handle);
     auto res = broadcast_to(t.get(), shape);
@@ -117,7 +117,7 @@ apply_result_t subtensor_grad_rule(ApplyContext& ctx, CustomBackward::Maker& mak
         apply_result_t ret(1);
         if (grad && inputs[0]) {
             SmallVector<Tensor*> args_(inputs.size()+1);
-            auto&& zeros = make_tensor(grad->comp_node(), inputs[0].get());
+            auto&& zeros = make_empty_tensor(grad->comp_node(), inputs[0].get(), grad->dtype());
             args_[0] = zeros.get();
             args_[1] = grad;
             for (size_t i = 1; i < inputs.size(); ++i) {
@@ -147,7 +147,7 @@ apply_result_t indexingMultiAxisVec_grad_rule(ApplyContext& ctx, CustomBackward:
         apply_result_t ret(1);
         if (grad && inputs[0]) {
             SmallVector<Tensor*> args_(inputs.size()+1);
-            auto&& zeros = make_tensor(grad->comp_node(), inputs[0].get());
+            auto&& zeros = make_empty_tensor(grad->comp_node(), inputs[0].get(), grad->dtype());
             args_[0] = zeros.get();
             args_[1] = grad;
             for (size_t i = 1; i < inputs.size(); ++i) {
@@ -163,7 +163,9 @@ apply_result_t indexingMultiAxisVec_grad_rule(ApplyContext& ctx, CustomBackward:
 apply_result_t reduce_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
     auto& op = ctx.op->cast_final_safe<Reduce>();
     if (op.mode == Reduce::Mode::SUM) {
-        mgb_assert(ctx.nargs == 1);
+        if (ctx.nargs != 1) {
+            throw GradRuleFallback();
+        }
         std::array<std::shared_ptr<Tensor>, 1> input_shapes;
         if (input_requires_grad(ctx, 0)) {
             input_shapes[0] = get_shape(ctx.args[0]);
@@ -221,6 +223,21 @@ apply_result_t removeAxis_grad_rule(ApplyContext& ctx, CustomBackward::Maker& ma
     return apply(ctx);
 }
 
+apply_result_t fastpathcopy_grad_rule(ApplyContext& ctx, CustomBackward::Maker& maker) {
+    mgb_assert(ctx.nargs == 1);
+    maker.output_size(1).output_captured(0, false);
+    maker.backward([](BackwardContext&, Tensor*const* grads, size_t ngrads) {
+        mgb_assert(ngrads == 1);
+        Tensor* grad = grads[0];
+        apply_result_t ret(1);
+        if (grad) {
+            ret[0] = grad->shared_from_this();
+        }
+        return ret;
+    });
+    return apply(ctx);
+}
+
 struct Init {
     Init() {
         auto& reg = grad_rule_registry();
@@ -231,6 +248,7 @@ struct Init {
         reg.emplace(Reduce::typeinfo(), reduce_grad_rule);
         reg.emplace(AddAxis::typeinfo(), addAxis_grad_rule);
         reg.emplace(RemoveAxis::typeinfo(), removeAxis_grad_rule);
+        reg.emplace(FastpathCopy::typeinfo(), fastpathcopy_grad_rule);
     }
 } _;
 

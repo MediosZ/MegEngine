@@ -91,7 +91,7 @@ class Module(metaclass=ABCMeta):
     def __init__(self, name=None):
         """
         :param name: module's name, can be initialized by the ``kwargs`` parameter
-        of child class.
+            of child class.
         """
         self._modules = []
 
@@ -122,7 +122,7 @@ class Module(metaclass=ABCMeta):
         Registers a hook to handle forward inputs. `hook` should be a function.
 
         :param hook: a function that receive `module` and `inputs`, then return
-        a modified `inputs` or `None`.
+            a modified `inputs` or `None`.
         :return: a handler with :meth:`~.HookHandler.remove` interface to delete the hook.
         """
         return HookHandler(self._forward_pre_hooks, hook)
@@ -600,36 +600,45 @@ class Module(metaclass=ABCMeta):
                             k, var_shape, to_be_load_shape
                         )
                     )
-            var._reset(type(var)(to_be_load, dtype=to_be_load.dtype, device=var.device))
+            var._reset(
+                type(var)(
+                    to_be_load, dtype=to_be_load.dtype, device=var.device, no_cache=True
+                )
+            )
             loaded.append(k)
 
         return set(loaded), set(skipped)
 
-    def __getattribute__(self, name: str):
-        value = super().__getattribute__(name)
-        if name == "__dict__":
-            return value
-        for prefix, variable in _expand_structure(name, value):
-            variable._name = prefix
-        return value
-
     def __setattr__(self, name: str, value):
-        if _is_module(value) or (
-            isinstance(value, (list, tuple, dict)) and name != "_modules"
-        ):
+        is_module_like = _is_module(value) or isinstance(value, (list, tuple, dict))
+        if name != "_modules":
             modules = self.__dict__.get("_modules")
-            if modules is None:
+            if modules is None and is_module_like:
                 raise AttributeError(
                     "cannot assign module before Module.__init__() call"
                 )
-            if name not in self.__dict__:
-                modules.append(name)
+            if is_module_like:
+                if name not in modules:
+                    modules.append(name)
+            else:
+                if modules is not None and name in modules:
+                    modules.remove(name)
+        for k, v in _expand_structure(name, value):
+            if not v._name:
+                v._name = k
+            else:
+                logger.warning(
+                    "try setting the submodule `{}` to a new attribute `{}`, its name `{}` will remain unchanged".format(
+                        v._name, k, v._name
+                    )
+                )
         super().__setattr__(name, value)
 
     def __delattr__(self, name: str):
         if name in self.__dict__ and _is_module(self.__dict__[name]):
             modules = self.__dict__.get("_modules")
-            modules.remove(name)
+            if name in modules:
+                modules.remove(name)
         super().__delattr__(name)
 
     def _module_info_string(self) -> str:

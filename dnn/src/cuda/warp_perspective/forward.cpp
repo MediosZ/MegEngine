@@ -22,6 +22,44 @@
 namespace megdnn {
 namespace cuda {
 
+namespace {
+inline void deduce_reformat_layout(std::unique_ptr<RelayoutFormat>& relayout,
+                                   const TensorLayout& src_layout,
+                                   TensorLayout& dst_layout,
+                                   RelayoutFormat::Param::Mode mode,
+                                   const int oc = 0, const int group = 1) {
+    if (src_layout.ndim > 0) {
+        RelayoutFormat::Param trans_param;
+        trans_param.mode = mode;
+        trans_param.oc = oc;
+        trans_param.group = group;
+        relayout->param() = trans_param;
+        relayout->deduce_layout(src_layout, dst_layout);
+    } else {
+        dst_layout = src_layout;
+    }
+}
+
+void get_inner_layout(const TensorLayout& src, const TensorLayout& dst,
+                      TensorLayout& inner_src, TensorLayout& inner_dst,
+                      Handle* handle,
+                      WarpPerspectiveForwardImpl::Param::Format format) {
+    if ((src.dtype.enumv() == DTypeEnum::QuantizedS4 ||
+         src.dtype.enumv() == DTypeEnum::Quantized4Asymm) &&
+        dst.dtype.enumv() == src.dtype.enumv() &&
+        format == param::WarpPerspective::Format::NCHW) {
+        auto relayout_opr = handle->create_operator<RelayoutFormat>();
+        deduce_reformat_layout(relayout_opr, src, inner_src,
+                               RelayoutFormat::Param::Mode::NCHW_NCHW64, 0, 1);
+        deduce_reformat_layout(relayout_opr, dst, inner_dst,
+                               RelayoutFormat::Param::Mode::NCHW_NCHW64, 0, 1);
+    } else {
+        megdnn_assert(0, "not support");
+    }
+}
+
+}  // namespace
+
 namespace warp_perspective {
 
 void warp_perspective_cv_exec(_megdnn_tensor_in src, _megdnn_tensor_in mat,
@@ -93,15 +131,23 @@ WorkspaceBundle WarpPerspectiveForwardImpl::get_workspace_bundle(
     TensorLayout fsrc = src;
     TensorLayout fmat = mat;
     TensorLayout fdst = dst;
-    auto get_workspace = [&sizes](TensorLayout& layout) {
-        if (layout.dtype == dtype::BFloat16()) {
-            layout.dtype = dtype::Float32();
-            sizes.push_back(layout.span().dist_byte());
-        }
-    };
-    get_workspace(fsrc);
-    get_workspace(fmat);
-    get_workspace(fdst);
+    if ((src.dtype.enumv() == DTypeEnum::QuantizedS4 ||
+         src.dtype.enumv() == DTypeEnum::Quantized4Asymm) &&
+        param().format == param::WarpPerspective::Format::NCHW) {
+        get_inner_layout(src, dst, fsrc, fdst, handle(), param().format);
+        sizes.push_back(fsrc.span().dist_byte());
+        sizes.push_back(fdst.span().dist_byte());
+    } else {
+        auto get_workspace = [&sizes](TensorLayout& layout) {
+            if (layout.dtype == dtype::BFloat16()) {
+                layout.dtype = dtype::Float32();
+                sizes.push_back(layout.span().dist_byte());
+            }
+        };
+        get_workspace(fsrc);
+        get_workspace(fmat);
+        get_workspace(fdst);
+    }
     if (param().format == param::WarpPerspective::Format::NHWC) {
         //! use double for the workspace dtype as float may cause
         //! accuracy problems
@@ -123,6 +169,7 @@ void WarpPerspectiveForwardImpl::exec(_megdnn_tensor_in ssrc,
     TensorND mat = smat;
     TensorND mat_idx = smat_idx;
     TensorND dst = sdst;
+    Param::Format inner_format = param().format;
     auto bundle =
             get_workspace_bundle(sworkspace.raw_ptr, ssrc.layout, smat.layout,
                                  smat_idx.layout, sdst.layout);
@@ -132,11 +179,25 @@ void WarpPerspectiveForwardImpl::exec(_megdnn_tensor_in ssrc,
         ctypecvt.src_to_comp_type(ssrc, src)
                 .src_to_comp_type(smat, mat)
                 .src_to_comp_type(sdst, dst);
+    } else if ((ssrc.layout.dtype.enumv() == DTypeEnum::QuantizedS4 ||
+                ssrc.layout.dtype.enumv() == DTypeEnum::Quantized4Asymm) &&
+               param().format == Param::Format::NCHW) {
+        auto handle_ptr = handle();
+        get_inner_layout(ssrc.layout, sdst.layout, src.layout, dst.layout,
+                         handle_ptr, param().format);
+        src.raw_ptr = bundle.get(0);
+        dst.raw_ptr = bundle.get(1);
+        auto relayout_opr = handle_ptr->create_operator<RelayoutFormat>();
+        RelayoutFormat::Param trans_param;
+        trans_param.mode = RelayoutFormat::Param::Mode::NCHW_NCHW64;
+        relayout_opr->param() = trans_param;
+        relayout_opr->exec(ssrc, src, {});
+        inner_format = Param::Format::NCHW64;
     }
 
     {
         auto stream = cuda_stream(this->handle());
-        bool is_nhwc = param().format == param::WarpPerspective::Format::NHWC;
+        bool is_nhwc = inner_format == param::WarpPerspective::Format::NHWC;
 
         if (is_nhwc && param().imode != Param::InterpolationMode::LINEAR) {
             // use opencv impl only for nhwc and non-linear interp
@@ -152,7 +213,7 @@ void WarpPerspectiveForwardImpl::exec(_megdnn_tensor_in ssrc,
         } else {
             megdnn_assert(warp::is_dnn_available(src.layout, mat.layout,
                                                  dst.layout, param().imode,
-                                                 param().format));
+                                                 inner_format));
             size_t C, IH, IW, OH, OW;
             if (is_nhwc) {
                 C = src.layout.shape[3];
@@ -160,19 +221,19 @@ void WarpPerspectiveForwardImpl::exec(_megdnn_tensor_in ssrc,
                 IW = src.layout.shape[2];
                 OH = dst.layout.shape[1];
                 OW = dst.layout.shape[2];
-            } else if (param().format == Param::Format::NCHW4) {
+            } else if (inner_format == Param::Format::NCHW4) {
                 C = src.layout.shape[1] * 4;
                 IH = src.layout.shape[2];
                 IW = src.layout.shape[3];
                 OH = dst.layout.shape[2];
                 OW = dst.layout.shape[3];
-            } else if (param().format == Param::Format::NHWC_NCHW) {
+            } else if (inner_format == Param::Format::NHWC_NCHW) {
                 C = src.layout.shape[3];
                 IH = src.layout.shape[1];
                 IW = src.layout.shape[2];
                 OH = dst.layout.shape[2];
                 OW = dst.layout.shape[3];
-            } else if (param().format == Param::Format::NHWC_NCHW4_IC_SMALL) {
+            } else if (inner_format == Param::Format::NHWC_NCHW4_IC_SMALL) {
                 C = src.layout.shape[3];
                 IH = src.layout.shape[1];
                 IW = src.layout.shape[2];
@@ -181,7 +242,7 @@ void WarpPerspectiveForwardImpl::exec(_megdnn_tensor_in ssrc,
                 megdnn_assert(
                         (C == 1) || (C == 3),
                         "NHWC_NCHW4_IC_SMALL only support C == 1 or C == 3");
-            } else if (param().format == Param::Format::NCHW_NCHW4_IC_SMALL) {
+            } else if (inner_format == Param::Format::NCHW_NCHW4_IC_SMALL) {
                 C = src.layout.shape[1];
                 IH = src.layout.shape[2];
                 IW = src.layout.shape[3];
@@ -190,9 +251,15 @@ void WarpPerspectiveForwardImpl::exec(_megdnn_tensor_in ssrc,
                 megdnn_assert(
                         (C == 1) || (C == 3),
                         "NCHW_NCHW4_IC_SMALL only support C == 1 or C == 3");
+            } else if (inner_format == Param::Format::NCHW64) {
+                C = src.layout.shape[1] * 64;
+                IH = src.layout.shape[2];
+                IW = src.layout.shape[3];
+                OH = dst.layout.shape[2];
+                OW = dst.layout.shape[3];
             } else {
                 megdnn_assert(
-                        param().format == param::WarpPerspective::Format::NCHW,
+                        inner_format == param::WarpPerspective::Format::NCHW,
                         "invalid warp_perspective format");
                 C = src.layout.shape[1];
                 IH = src.layout.shape[2];
@@ -261,6 +328,115 @@ void WarpPerspectiveForwardImpl::exec(_megdnn_tensor_in ssrc,
                             mat.layout[0], C, IH, IW, OH, OW, bval, bmode,
                             async_error_info(handle()), m_error_tracker,
                             stream);
+                } else if ((src.layout.dtype.enumv() ==
+                            DTypeEnum::QuantizedS4) &&
+                           (param().format == Param::Format::NCHW64 ||
+                            param().format == Param::Format::NCHW)) {
+                    bval = roundf(bval);
+                    bval = fmin(fmax(-8.f, bval), 7.f);
+                    warp_perspective::forward_proxy_nchw64<dt_qint4>(
+                            src.compatible_ptr<dt_qint4>(),
+                            mat.ptr<dt_float32>(),
+                            mat_idx.raw_ptr ? mat_idx.ptr<int>() : nullptr,
+                            dst.compatible_ptr<dt_qint4>(), src.layout[0],
+                            mat.layout[0], C, IH, IW, OH, OW,
+                            static_cast<dt_qint4>(bval), bmode,
+                            async_error_info(handle()), m_error_tracker,
+                            stream);
+                    if (param().format == Param::Format::NCHW) {
+                        auto relayout_opr =
+                                handle()->create_operator<RelayoutFormat>();
+                        RelayoutFormat::Param trans_param;
+                        trans_param.mode =
+                                RelayoutFormat::Param::Mode::NCHW64_NCHW;
+                        trans_param.oc = sdst.layout[1]; 
+                        relayout_opr->param() = trans_param;
+                        relayout_opr->exec(dst, sdst, {});
+                    }
+                } else if ((src.layout.dtype.enumv() ==
+                            DTypeEnum::Quantized4Asymm) &&
+                           (param().format == Param::Format::NCHW64 ||
+                            param().format == Param::Format::NCHW)) {
+                    bval = roundf(bval);
+                    bval = fmin(fmax(0, bval), 15);
+                    warp_perspective::forward_proxy_nchw64<dt_quint4>(
+                            src.compatible_ptr<dt_quint4>(),
+                            mat.ptr<dt_float32>(),
+                            mat_idx.raw_ptr ? mat_idx.ptr<int>() : nullptr,
+                            dst.compatible_ptr<dt_quint4>(), src.layout[0],
+                            mat.layout[0], C, IH, IW, OH, OW,
+                            static_cast<dt_quint4>(bval), bmode,
+                            async_error_info(handle()), m_error_tracker,
+                            stream);
+                    if (param().format == Param::Format::NCHW) {
+                        auto relayout_opr =
+                                handle()->create_operator<RelayoutFormat>();
+                        RelayoutFormat::Param trans_param;
+                        trans_param.mode =
+                                RelayoutFormat::Param::Mode::NCHW64_NCHW;
+                        trans_param.oc = sdst.layout[1];
+                        relayout_opr->param() = trans_param;
+                        relayout_opr->exec(dst, sdst, {});
+                    }
+                } else if ((src.layout.dtype.enumv() ==
+                                    DTypeEnum::QuantizedS4 ||
+                            src.layout.dtype.enumv() ==
+                                    DTypeEnum::Quantized4Asymm) &&
+                           (param().format == Param::Format::NHWC)) {
+                    constexpr int pack_c = 8;
+                    megdnn_assert(C % pack_c == 0);
+                    bval = roundf(bval);
+                    if (src.layout.dtype.enumv() == DTypeEnum::QuantizedS4) {
+                        bval = fmin(fmax(-8.f, bval), 7.f);
+                        if (C % 16 == 0) {
+                            warp_perspective::forward_proxy_nhwc_bit4<dt_qint4,
+                                                                      16>(
+                                    src.ptr<dt_qint4>(), mat.ptr<dt_float32>(),
+                                    mat_idx.raw_ptr ? mat_idx.ptr<int>()
+                                                    : nullptr,
+                                    dst.ptr<dt_qint4>(), src.layout[0],
+                                    mat.layout[0], C, IH, IW, OH, OW,
+                                    static_cast<dt_qint4>(bval), bmode,
+                                    async_error_info(handle()), m_error_tracker,
+                                    stream);
+                        } else {
+                            warp_perspective::forward_proxy_nhwc_bit4<dt_qint4,
+                                                                      pack_c>(
+                                    src.ptr<dt_qint4>(), mat.ptr<dt_float32>(),
+                                    mat_idx.raw_ptr ? mat_idx.ptr<int>()
+                                                    : nullptr,
+                                    dst.ptr<dt_qint4>(), src.layout[0],
+                                    mat.layout[0], C, IH, IW, OH, OW,
+                                    static_cast<dt_qint4>(bval), bmode,
+                                    async_error_info(handle()), m_error_tracker,
+                                    stream);
+                        }
+                    } else {
+                        bval = fmin(fmax(0.f, bval), 15.f);
+                        if (C % 16 == 0) {
+                            warp_perspective::forward_proxy_nhwc_bit4<dt_quint4,
+                                                                      16>(
+                                    src.ptr<dt_quint4>(), mat.ptr<dt_float32>(),
+                                    mat_idx.raw_ptr ? mat_idx.ptr<int>()
+                                                    : nullptr,
+                                    dst.ptr<dt_quint4>(), src.layout[0],
+                                    mat.layout[0], C, IH, IW, OH, OW,
+                                    static_cast<dt_quint4>(bval), bmode,
+                                    async_error_info(handle()), m_error_tracker,
+                                    stream);
+                        } else {
+                            warp_perspective::forward_proxy_nhwc_bit4<dt_quint4,
+                                                                      pack_c>(
+                                    src.ptr<dt_quint4>(), mat.ptr<dt_float32>(),
+                                    mat_idx.raw_ptr ? mat_idx.ptr<int>()
+                                                    : nullptr,
+                                    dst.ptr<dt_quint4>(), src.layout[0],
+                                    mat.layout[0], C, IH, IW, OH, OW,
+                                    static_cast<dt_quint4>(bval), bmode,
+                                    async_error_info(handle()), m_error_tracker,
+                                    stream);
+                        }
+                    }
                 }
             } else if ((src.layout.dtype.enumv() ==
                                 DTypeEnum::Quantized8Asymm ||

@@ -15,6 +15,7 @@
 #include "src/cuda/convolution_helper/layout.cuh"
 #include "src/cuda/convolution_helper/parameter.cuh"
 #include "src/cuda/utils.h"
+#include "src/common/conv_bias.h"
 
 using namespace megdnn;
 using namespace cuda;
@@ -108,6 +109,10 @@ INST(PerChannelBiasVisitor);
 
 bool ConvBiasForwardImpl::AlgoInt8CHWN4IMMAImplicitGemmUnrollWidth::
         is_available(const SizeArgs& args) const {
+    if (!args.src_layout->is_contiguous() ||
+        !args.dst_layout->is_contiguous()) {
+        return false;
+    }
     if (args.bias_layout->ndim <= 0)
         return false;
 
@@ -118,7 +123,7 @@ bool ConvBiasForwardImpl::AlgoInt8CHWN4IMMAImplicitGemmUnrollWidth::
     bool available = true;
     auto&& param = args.opr->param();
     auto&& fm = args.filter_meta;
-    if (!conv_bias::check_bias_share_in_channel(*(args.bias_layout),
+    if (!check_bias_share_in_channel(*(args.bias_layout),
                                                 param.format))
         return false;
     if (param.format != Format::CHWN4)

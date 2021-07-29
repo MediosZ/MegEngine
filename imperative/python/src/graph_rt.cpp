@@ -21,8 +21,9 @@
 #include "./helper.h"
 #include "megbrain/plugin/profiler.h"
 #include "./common.h"
+#include "./ops.h"
 #include "megbrain/gopt/inference.h"
-
+#include "megbrain/imperative/profiler_plugin.h"
 
 namespace py = pybind11;
 
@@ -33,6 +34,7 @@ namespace ser = mgb::serialization;
 using _OptimizeForInferenceOptions = mgb::gopt::OptimizeForInferenceOptions;
 using _LayoutTransform = _OptimizeForInferenceOptions::LayoutTransform;
 using _AlgoStrategy = opr::mixin::AlgoChooserHelper::ExecutionPolicy::Strategy;
+using _SerializationMetadata = mgb::serialization::Metadata;
 
 namespace {
 class _CompGraphProfilerImpl {
@@ -190,7 +192,14 @@ void init_graph_rt(py::module m) {
         })
         .def("__repr__", [](cg::OperatorNodeBase* opr){
             return "Opr:" + opr->name();
-        });
+        })
+        .def_property("priority",
+            [](cg::OperatorNodeBase* opr) {
+                return opr->node_prop().attribute().priority;
+            },
+            [](cg::OperatorNodeBase* opr, int priority) {
+                opr->node_prop().attribute().priority = priority;
+            });
 
     py::class_<cg::AsyncExecutable>(m, "AsyncExecutable")
         .def("execute", &cg::AsyncExecutable::execute, py::call_guard<py::gil_scoped_release>())
@@ -214,7 +223,10 @@ void init_graph_rt(py::module m) {
                 }
             }
             return ret;
-        });
+        })
+        .def("get_static_memory_alloc_info",
+             &cg::AsyncExecutable::get_static_memory_alloc_info,
+             py::call_guard<py::gil_scoped_release>());
 
     auto PyComputingGraph = py::class_<cg::ComputingGraph, std::shared_ptr<cg::ComputingGraph>>(m, "ComputingGraph")
         .def(py::init(py::overload_cast<>(&cg::ComputingGraph::make)))
@@ -234,12 +246,19 @@ void init_graph_rt(py::module m) {
                 }))
         .def("get", [](_CompGraphProfilerImpl& profiler) { return profiler._get_result(); });
 
+    using interpreter::intl::ProfilerPlugin;
+    py::class_<ProfilerPlugin, std::shared_ptr<ProfilerPlugin>>(m, "GraphProfiler2")
+        .def(py::init<cg::ComputingGraph*>());
+
     auto GraphOptimizeOptions = py::class_<_OptimizeForInferenceOptions>(m, "GraphOptimizeOptions")
         .def(py::init())
+        .def("serialize", &_OptimizeForInferenceOptions::serialize)
+        .def_static("deserialize", &_OptimizeForInferenceOptions::deserialize)
         .def_readwrite("f16_io_f32_comp", &_OptimizeForInferenceOptions::f16_io_f32_comp)
         .def_readwrite("f16_io_comp", &_OptimizeForInferenceOptions::f16_io_comp)
         .def_readwrite("fuse_conv_bias_nonlinearity", &_OptimizeForInferenceOptions::fuse_conv_bias_nonlinearity)
         .def_readwrite("fuse_conv_bias_with_z", &_OptimizeForInferenceOptions::fuse_conv_bias_with_z)
+        .def_readwrite("fuse_preprocess", &_OptimizeForInferenceOptions::fuse_preprocess)
         .def_readwrite("layout_transform", &_OptimizeForInferenceOptions::layout_transform)
         ;
 
@@ -252,6 +271,7 @@ void init_graph_rt(py::module m) {
         .value("NCHW44_DOT", _LayoutTransform::NCHW44_DOT)
         .value("NCHW32", _LayoutTransform::NCHW32)
         .value("CHWN4", _LayoutTransform::CHWN4)
+        .value("NCHW64", _LayoutTransform::NCHW64)
         .export_values()
         ;
 
@@ -265,18 +285,8 @@ void init_graph_rt(py::module m) {
     });
 
     m.def("modify_opr_algo_strategy_inplace", [](const VarNodeArray& dest_vars,
-                                                 const std::string& strategy) {
-        _AlgoStrategy stg;
-        const std::unordered_map<std::string, std::function<void()>> m{
-                {"HEURISTIC", [&]() { stg = _AlgoStrategy::HEURISTIC; }},
-                {"PROFILE", [&]() { stg = _AlgoStrategy::PROFILE; }},
-                {"REPRODUCIBLE", [&]() { stg = _AlgoStrategy::REPRODUCIBLE; }},
-                {"OPTIMIZED", [&]() { stg = _AlgoStrategy::OPTIMIZED; }},
-        };
-        auto it = m.find(strategy);
-        mgb_assert(it != m.end(), "Invalid strategy string!");
-        it->second();
-        mgb::gopt::modify_opr_algo_strategy_inplace(dest_vars, stg);
+                                                 const _AlgoStrategy& strategy) {
+        mgb::gopt::modify_opr_algo_strategy_inplace(dest_vars, strategy);
     });
 
     m.def("get_info_for_strip", [](const std::vector<VarNode*>& dest_vars) {
@@ -313,12 +323,24 @@ void init_graph_rt(py::module m) {
         })->to_string();
     });
 
+    py::class_<_SerializationMetadata>(m, "SerializationMetadata")
+        .def(py::init())
+        .def_property("user_info", [](const _SerializationMetadata& meta){return py::bytes(meta.get_user_info()); },
+            &_SerializationMetadata::set_user_info)
+        .def_readonly("optimized_for_inference", &_SerializationMetadata::optimized_for_inference)
+        .def_property("optimize_options", &_SerializationMetadata::get_optimize_options,
+            &_SerializationMetadata::set_optimize_options)
+        .def_readwrite("graph_modified", &_SerializationMetadata::graph_modified)
+        .def_readwrite("is_valid", &_SerializationMetadata::is_valid)
+        ;
+
     m.def("dump_graph", [](
         const std::vector<VarNode*>& dest_vars,
         int keep_var_name,
         bool keep_opr_name,
         bool keep_param_name,
         bool keep_opr_priority,
+        std::optional<_SerializationMetadata> metadata,
         py::list& stat,
         py::list& inputs,
         py::list& outputs,
@@ -331,7 +353,12 @@ void init_graph_rt(py::module m) {
         ser::GraphDumper::DumpConfig config{keep_var_name, keep_param_name,
                                        keep_opr_priority, keep_opr_name};
 
-        auto rst = dumper->dump(symvars, config);
+        ser::GraphDumper::DumpResult rst;
+        if (metadata)
+            rst = dumper->dump(symvars, config, *metadata);
+        else
+            rst = dumper->dump(symvars, config);
+
         for (auto i : rst.inputs) {
             inputs.append(py::cast(i));
         }
@@ -383,8 +410,10 @@ void init_graph_rt(py::module m) {
         for (const auto& var : rst.output_var_list) {
             iter.add(var);
         }
-        return rst.graph;
-
+        auto ret = py::tuple(2);
+        ret[0] = py::cast(rst.graph);
+        ret[1] = py::cast(rst.metadata);
+        return ret;
     });
 
 #define CURRENT_CLASS cg::ComputingGraph::Options
@@ -401,6 +430,7 @@ void init_graph_rt(py::module m) {
         DEF_READWRITE(allocate_static_mem_after_graph_compile)
         DEF_READWRITE(fake_next_exec)
         DEF_READWRITE(enable_sublinear_memory_opt)
+        DEF_READWRITE(enable_dtr_memory_opt)
         DEF_READWRITE(no_profiling_on_shape_change)
         DEF_READWRITE(enable_var_mem_defragment)
         DEF_READWRITE(enable_grad_var_static_reshape)
@@ -408,6 +438,7 @@ void init_graph_rt(py::module m) {
         DEF_READWRITE(comp_node_seq_record_level)
         DEF_READWRITE(no_force_inplace)
         DEF_READWRITE(sublinear_mem_config)
+        DEF_READWRITE(dtr_config)
         // DEF_READWRITE(eager_evaluation)
         // DEF_READWRITE(imperative_proxy_graph)
         // DEF_READWRITE(extra_vardeps)
@@ -425,12 +456,20 @@ void init_graph_rt(py::module m) {
 #undef CURRENT_CLASS
 #define CURRENT_CLASS cg::ComputingGraph::Options::GraphOpt
 
-    py::class_<cg::ComputingGraph::Options::GraphOpt>(PyComputingGraphOptions, "GraphOpt")
+    auto PyGraphOpt = py::class_<cg::ComputingGraph::Options::GraphOpt>(
+            PyComputingGraphOptions, "GraphOpt")
         DEF_READWRITE(jit)
+        DEF_READWRITE(jit_config)
         DEF_READWRITE(tensorrt);
 
 #undef CURRENT_CLASS
+#define CURRENT_CLASS cg::ComputingGraph::Options::GraphOpt::JITConfig
 
+    py::class_<cg::ComputingGraph::Options::GraphOpt::JITConfig>(PyGraphOpt, "JITConfig")
+        DEF_READWRITE(fuse_dimshuffle)
+        DEF_READWRITE(fuse_reduce);
+
+#undef CURRENT_CLASS
 #define CURRENT_CLASS cg::ComputingGraph::Options::SublinearMemConfig
 
     py::class_<cg::ComputingGraph::Options::SublinearMemConfig>(PyComputingGraphOptions, "SublinearMemConfig")
@@ -439,6 +478,14 @@ void init_graph_rt(py::module m) {
         DEF_READWRITE(genetic_pool_size)
         DEF_READWRITE(lb_memory)
         DEF_READWRITE(num_worker);
+
+#undef CURRENT_CLASS
+
+#define CURRENT_CLASS cg::ComputingGraph::Options::DTRConfig
+
+    py::class_<cg::ComputingGraph::Options::DTRConfig>(PyComputingGraphOptions, "DTRConfig")
+        DEF_READWRITE(eviction_threshold)
+        DEF_READWRITE(evictee_minimum_size);
 
 #undef CURRENT_CLASS
     auto common = rel_import("common", m, 1);
