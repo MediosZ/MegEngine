@@ -15,6 +15,8 @@ ModelExecutor::ModelExecutor(std::string path){
     serialization::GraphLoadConfig config;
     network = loader->load(config, false);
     tensor_registry = std::unordered_map<int, std::shared_ptr<Tensor>>();
+    // auto engine = EngineWrapperInst();
+    output_id = -1;
 }
 
 #ifdef __EMSCRIPTEN__
@@ -35,12 +37,22 @@ int32_t ModelExecutor::forward(const emscripten::val &v, const emscripten::val &
                     network.output_var_map.begin()->second, predict)});
     func->execute();
     func->wait();
+    /*
     auto t_out_value = predict.ptr<float>();
     for(size_t i = 0; i < predict.shape().total_nr_elems(); i++){
         mgb_log("value<%d>: %f", i, t_out_value[i]);
     }
+    */
+    auto handle = interpreter_for_js->put(predict, true);
+    auto outTensor = std::make_shared<Tensor>(handle);
+    if(output_id == -1){        
+        output_id = EngineWrapper::Inst()->registerTensor(outTensor);
+    }
+    else{
+        EngineWrapper::Inst()->replaceTensor(output_id, outTensor);
+    }
 
-    return 0;
+    return output_id;
 }
 
 #endif

@@ -39,6 +39,7 @@ public:
         tensor_registry->at(id) = t;
     }
 
+
 private:
     std::shared_ptr<GradKey> gradkey;
     std::shared_ptr<std::unordered_map<int, std::shared_ptr<Tensor>>> tensor_registry;
@@ -50,6 +51,13 @@ private:
 class EngineWrapper{
 public:
     EngineWrapper();
+
+    static EngineWrapper* Inst(){
+        if(_inst == NULL){
+            _inst = new EngineWrapper;
+        }
+        return _inst;
+    }
 
     void startScope(){
         _engine.startScope();
@@ -98,6 +106,9 @@ public:
     std::shared_ptr<TensorWrapper> getTensorWrapper(int id){
         return _tensor_wrapper_registry->at(id);
     }
+    size_t size(){
+        return _tensor_wrapper_registry->size();
+    }
 
     void printTensor(int id);
     void printGrad(int id);
@@ -124,9 +135,8 @@ public:
     int argmax(int a, int axis);
     
 private:
+    static EngineWrapper* _inst;
     Engine _engine;
     std::shared_ptr<std::unordered_map<int, std::shared_ptr<TensorWrapper>>> _tensor_wrapper_registry;
 };
-
-
 };

@@ -12,6 +12,10 @@ export class WasmModelExecutor {
 
 export class WasmEngine {
     constructor();
+
+    static inst(): WasmEngine;
+
+    size(): Int;
     
     startScope(): void;
     

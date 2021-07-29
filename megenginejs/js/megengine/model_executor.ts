@@ -1,7 +1,7 @@
 import { RecursiveArray, TypedArray, isTypedArray, DType} from "./dtypes";
-import {ENGINE} from "./index";
+import {ENGINE} from "./engine";
 import {WasmModelExecutor} from "./wasm_dtypes";
-import {TensorInfo} from './tensor';
+import {TensorInfo, Tensor } from './tensor';
 import {inferShape, inferSizeFromShape, flatten} from './utils';
 
 async function createFile(path: string): Promise<string> {
@@ -69,7 +69,8 @@ class ModelExecutor {
           let arrayBuffer = new Float32Array(flatten(data));
           id = this.model.forward(shapeBytes, arrayBuffer, dtype);
         }
-        // console.log(`receive id ${id}`);
+        return ENGINE.createTensor(id, inferedShape, dtype);
+
     }
 
     delete() {

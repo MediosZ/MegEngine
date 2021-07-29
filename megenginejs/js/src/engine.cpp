@@ -535,11 +535,13 @@ int EngineWrapper::argmax(int a, int axis){
 }
 
 
-
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_BINDINGS(Engine) {
+    // emscripten::function("inst", &EngineWrapperInst, emscripten::allow_raw_pointers());
   emscripten::class_<EngineWrapper>("Engine")
-    .constructor<>()
+    // .constructor<>()
+    .smart_ptr<std::shared_ptr<EngineWrapper>>("Engine")
+    .class_function("inst", &EngineWrapper::Inst, emscripten::allow_raw_pointers())
     .function("startScope", &EngineWrapper::startScope)
     .function("endScope", &EngineWrapper::endScope)
     .function("attach", &EngineWrapper::attach)
@@ -575,6 +577,7 @@ EMSCRIPTEN_BINDINGS(Engine) {
     .function("getTensorShape", &EngineWrapper::getTensorShape)
     .function("astype", &EngineWrapper::typeCvt)
     .function("argmax", &EngineWrapper::argmax)
+    .function("size", &EngineWrapper::size)
     ;
 
 }

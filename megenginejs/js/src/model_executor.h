@@ -6,6 +6,7 @@
 #include <string>
 #include "megbrain/serialization/serializer.h"
 #include "./utils.h"
+#include "./engine.h"
 
 using namespace mgb::imperative::interpreter;
 namespace mgb::imperative::js {
@@ -48,6 +49,7 @@ public:
 private:
     serialization::GraphLoader::LoadResult network;
     std::unordered_map<int, std::shared_ptr<Tensor>> tensor_registry;
+    int output_id;
 };
 
 
