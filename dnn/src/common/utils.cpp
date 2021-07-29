@@ -10,6 +10,7 @@
  */
 
 #include "src/common/utils.h"
+#include "megdnn/oprs/utils.h"
 #include "megdnn/handle.h"
 
 #include <cstdarg>
@@ -221,7 +222,8 @@ megcoreDeviceHandle_t megdnn::get_device_handle(Handle* handle) {
     megcoreDeviceHandle_t dev_handle;
     megcoreComputingHandle_t comp_handle = handle->megcore_computing_handle();
     status = megcoreGetDeviceHandle(comp_handle, &dev_handle);
-    megdnn_assert(status == megcoreSuccess);
+    megdnn_throw_if(status != megcoreSuccess, megdnn_error,
+                    "get device handle error!");
     return dev_handle;
 }
 
@@ -232,6 +234,7 @@ float megdnn::mul_scale(DType lhs, DType rhs) {
         (rhs.enumv() == DTypeTrait<dt2>::enumv))   \
         return lhs.param<dt1>().scale * rhs.param<dt2>().scale;
     cb_binary(::megdnn::dtype::QuantizedS8, ::megdnn::dtype::QuantizedS16)
+    cb_binary(::megdnn::dtype::Quantized4Asymm, ::megdnn::dtype::QuantizedS4)
 #undef cb_binary
 
     megdnn_assert(lhs.enumv() == rhs.enumv());
@@ -244,6 +247,17 @@ float megdnn::mul_scale(DType lhs, DType rhs) {
     megdnn_assert_internal(0);
 }
 // clang-format on
+
+float megdnn::get_scale(DType dt) {
+    megdnn_assert(dt.category() == DTypeCategory::QUANTIZED);
+#define cb(_dt)                               \
+    if (dt.enumv() == DTypeTrait<_dt>::enumv) \
+        return dt.param<_dt>().scale;
+    MEGDNN_FOREACH_QUANTIZED_DTYPE(cb)
+    MEGDNN_FOREACH_QUANTIZED_LOWBIT_DTYPE(cb)
+#undef cb
+    megdnn_assert_internal(0);
+}
 
 bool megdnn::dtype_almost_equal(DType lhs, DType rhs) {
     if (lhs.enumv() != rhs.enumv())
@@ -330,6 +344,36 @@ size_t& CpuNDRange::operator[](size_t idx) {
     megdnn_assert(idx < m_dimension, "invalid index: %zu expected < %zu", idx,
                   m_dimension);
     return m_dim[idx];
+}
+
+bool megdnn::check_bias_share_in_channel(const TensorLayout& bias,
+                                 const param::ConvBias::Format format) {
+    bool share_in_channel = false;
+    if (format == param::ConvBias::Format::NCHW ||
+        format == param::ConvBias::Format::NCHW4_NCHW) {
+        share_in_channel = (bias.ndim == 4 && bias[0] == 1 && bias[2] == 1 &&
+                            bias[3] == 1);
+    } else if (format == param::ConvBias::Format::NHWC ||
+               format == param::ConvBias::Format::NCHW4_NHWC) {
+        share_in_channel = (bias.ndim == 4 && bias[0] == 1 && bias[1] == 1 &&
+                            bias[2] == 1);
+    } else if (format == param::ConvBias::Format::NCHW4 ||
+               format == param::ConvBias::Format::NCHW8 ||
+               format == param::ConvBias::Format::NCHW32 ||
+               format == param::ConvBias::Format::NCHW64 ||
+               format == param::ConvBias::Format::NCHW4_NCHW32 ||
+               format == param::ConvBias::Format::NCHW32_NCHW4) {
+        share_in_channel = (bias.ndim == 5 && bias[0] == 1 && bias[2] == 1 &&
+                            bias[3] == 1);
+    } else if (format == param::ConvBias::Format::NHWCD4) {
+        share_in_channel = (bias.ndim == 5 && bias[0] == 1 && bias[1] == 1 &&
+                            bias[3] == 1);
+    } else {
+        megdnn_assert(format == param::ConvBias::Format::CHWN4);
+        share_in_channel = (bias.ndim == 5 && bias[1] == 1 && bias[2] == 1 &&
+                            bias[3] == 1);
+    }
+    return share_in_channel;
 }
 
 // vim: syntax=cpp.doxygen

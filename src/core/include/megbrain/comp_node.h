@@ -351,6 +351,20 @@ class CompNode {
             return m_impl->get_mem_status_bytes();
         }
 
+#if !MGB_BUILD_SLIM_SERVING
+        std::pair<size_t, size_t> get_free_left_and_right(size_t begin_ptr, size_t end_ptr) {
+            return m_impl->get_free_left_and_right(begin_ptr, end_ptr);
+        }
+
+        size_t get_used_memory() const {
+            return m_impl->get_used_memory();
+        }
+
+        size_t get_max_block_size_available() const {
+            return m_impl->get_max_block_size_available();
+        }
+#endif
+
         //! change to another stream on the same memory node
         CompNode change_stream(int dest_stream) const;
 
@@ -527,6 +541,18 @@ class CompNode {
 
                 virtual MemNode mem_node() = 0;
                 virtual std::pair<size_t, size_t> get_mem_status_bytes() = 0;
+
+#if !MGB_BUILD_SLIM_SERVING
+                virtual std::pair<size_t, size_t> get_free_left_and_right(size_t x, size_t y) {
+                    return {x - x, y - y};
+                }
+                virtual size_t get_used_memory() {
+                    return 0;
+                }
+                virtual size_t get_max_block_size_available() {
+                    return 0;
+                }
+#endif
 
                 virtual Locator locator() = 0;
                 virtual Locator locator_logical() = 0;

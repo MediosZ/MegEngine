@@ -131,6 +131,12 @@ namespace {
                                   std::numeric_limits<T>::digits));
     }
 
+    float do_gelu_grad(float x, float y) {
+        float phi = 1.f / sqrtf(2.0 * M_PI) * expf(-0.5f * x * x);
+        float normcdf_v = 0.5f * (1.f + erff(x / sqrtf(2.f)));
+        return y * (normcdf_v + x * phi);
+    }
+
     /* ======================= basic framework ======================= */
 
     template<typename ctype, bool stable_sign = false>
@@ -562,6 +568,9 @@ namespace {
             return false;
         }
     };
+
+    template<> struct CheckerConfig<SILU_GRAD>: public NoGradCheckerConfig {};
+    template<> struct CheckerConfig<GELU_GRAD>: public NoGradCheckerConfig {};
 
     /* ======================= ternary config ======================= */
     template<> struct CheckerConfig<COND_LEQ_MOV>:
@@ -1062,6 +1071,39 @@ TEST(TestOprBasicArithElemwise, EmptyInputOutputBinary) {
     ASSERT_TRUE(host_z.empty());
     ASSERT_TRUE(host_z.shape().is_empty());
     MGB_ASSERT_SHAPE_EQ(host_z.shape(), TensorShape({0, 8, 1, 7}));
+}
+
+TEST(TestOprBasicArithElemwise, PerformEmptyIO) {
+    auto cn = CompNode::load("xpu0");
+    HostTensorGenerator<> gen;
+    auto host_x1 = gen({2, 0, 3, 4}),
+         host_x2 = gen({1});
+    auto dev_x1 = std::make_shared<DeviceTensorND>(cn),
+         dev_x2 = std::make_shared<DeviceTensorND>(cn);
+    dev_x1->copy_from(*host_x1);
+    dev_x2->copy_from(*host_x2);
+
+    auto dev_y = std::make_shared<DeviceTensorND>(cn, dev_x1->dtype());
+    dev_y->resize(dev_x1->shape());
+    auto&& dnn_opr = opr::intl::create_megdnn_opr<megdnn::Elemwise>(cn);
+
+    // test unary mode
+    for (auto mode: {Mode::NEGATE, Mode::EXP, Mode::LOG}) {
+        SmallVector<DeviceTensorND> inputs = {*dev_x1};
+        ASSERT_NO_THROW(opr::Elemwise::perform(mode, *dev_y, inputs, dnn_opr));
+        ASSERT_TRUE(dev_y->empty());
+        ASSERT_TRUE(dev_y->shape().is_empty());
+        MGB_ASSERT_SHAPE_EQ(dev_y->shape(), dev_x1->shape());
+    }
+
+    // test binary mode
+    for (auto mode: {Mode::ADD, Mode::MUL, Mode::LT}) {
+        SmallVector<DeviceTensorND> inputs = {*dev_x1, *dev_x2};
+        ASSERT_NO_THROW(opr::Elemwise::perform(mode, *dev_y, inputs, dnn_opr));
+        ASSERT_TRUE(dev_y->empty());
+        ASSERT_TRUE(dev_y->shape().is_empty());
+        MGB_ASSERT_SHAPE_EQ(dev_y->shape(), dev_x1->shape());
+    }
 }
 
 // vim: syntax=cpp.doxygen foldmethod=marker foldmarker=f{{{,f}}}

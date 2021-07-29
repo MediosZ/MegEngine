@@ -30,6 +30,7 @@
 #include "megbrain/serialization/internal/flatbuffers_helper.h"
 #include "megbrain/serialization/internal/schema_generated.h"
 #include "megbrain/serialization/opr_load_dump.h"
+#include "megbrain/serialization/metadata.h"
 #include "megbrain/serialization/serializer.h"
 #include "megbrain/version.h"
 
@@ -62,7 +63,12 @@ bool contains_any_in_set(const SmallVector<T>& list,
 
 void check_tensor_value_valid(const std::string& name,
                               const HostTensorND& tensor) {
-    mgb_assert(tensor.layout().is_physical_contiguous(),
+    bool cond_normal = tensor.layout().format.is_default() &&
+                       tensor.layout().is_physical_contiguous();
+    bool cond_lowbit = tensor.layout().dtype.is_quantized_lowbit() &&
+                       tensor.layout().format.is_lowbit_aligned() &&
+                       tensor.layout().is_contiguous();
+    mgb_assert(cond_normal || cond_lowbit,
                "non-contiguous tensor: name=%s layout=%s", name.c_str(),
                tensor.layout().to_string().c_str());
     if (tensor.dtype() == dtype::Float32()) {
@@ -110,6 +116,7 @@ class GraphDumperOSS final : public GraphDumper, OprDumpContextFlatBuffers {
     std::vector<flatbuffers::Offset<void>> m_cur_opr_param;
 
     void init_oprs_to_dump(const SymbolVarArray& endpoints);
+    flatbuffers::Offset<fbs::Metadata> build_metadata(const Metadata& metadata);
     flatbuffers::Offset<fbs::Operator> build_single_opr(
             cg::OperatorNodeBase* opr, const OprRegistry* registry);
 
@@ -118,7 +125,8 @@ class GraphDumperOSS final : public GraphDumper, OprDumpContextFlatBuffers {
 public:
     GraphDumperOSS(std::unique_ptr<OutputFile> file) : m_file{std::move(file)} {}
     DumpResult dump(const SymbolVarArray& output_vars,
-                    const DumpConfig& config = {}) override;
+                    const DumpConfig& config = {},
+                    const Metadata& metadata = {}) override;
     const GraphDumpConfig& config() const override { return m_config; }
     void dump_tensor(const std::string& name, const HostTensorND& tensor,
                      TensorWriteMethod method) override;
@@ -178,6 +186,17 @@ void GraphDumperOSS::init_oprs_to_dump(const SymbolVarArray& endpoints) {
     for (auto i : endpoints) {
         dep_opr_iter.add(i.node()->owner_opr());
     }
+}
+
+flatbuffers::Offset<fbs::Metadata> GraphDumperOSS::build_metadata(
+    const Metadata& metadata) {
+    auto user_info = m_builder.CreateSharedString(metadata.user_info);
+    fbs::MetadataBuilder builder(m_builder);
+    builder.add_is_valid(metadata.is_valid);
+    builder.add_graph_modified(metadata.graph_modified);
+    builder.add_user_info(user_info);
+    builder.add_optimize_options(metadata.optimize_options);
+    return builder.Finish();
 }
 
 flatbuffers::Offset<fbs::Operator> GraphDumperOSS::build_single_opr(
@@ -277,7 +296,8 @@ flatbuffers::Offset<fbs::Operator> GraphDumperOSS::build_single_opr(
 }
 
 GraphDumper::DumpResult GraphDumperOSS::dump(
-        const SymbolVarArray& output_vars, const DumpConfig& config) {
+        const SymbolVarArray& output_vars,
+        const DumpConfig& config, const Metadata& metadata) {
     mgb_throw_if(output_vars.empty(), SerializationError,
                  "Can't dump empty graph");
 
@@ -318,6 +338,9 @@ GraphDumper::DumpResult GraphDumperOSS::dump(
     uint64_t offset_to_fbs = 0;
     m_file->write(&offset_to_fbs, sizeof(offset_to_fbs));
 
+    // Dump metadata
+    auto fbmeta = build_metadata(metadata);
+
     // Dump operators
     init_oprs_to_dump(output_vars);
     std::vector<flatbuffers::Offset<fbs::Operator>> oprs;
@@ -345,6 +368,7 @@ GraphDumper::DumpResult GraphDumperOSS::dump(
     graph.add_oprs(fb_oprs);
     graph.add_output_vars_idx(fb_output_vars);
     graph.add_nr_shared_tensor(m_nr_shared_tensor);
+    graph.add_metadata(fbmeta);
     m_builder.FinishSizePrefixed(graph.Finish(), fbs::GraphIdentifier());
 
     // Write actual offset_to_fbs
@@ -526,6 +550,7 @@ public:
         mgb_assert(nr == 1);
     }
 
+    Metadata load_metadata();
     LoadResult load_oprs();
     CompNode load_comp_node(const fbs::CompNode* comp_node);
 
@@ -585,11 +610,12 @@ TensorLayout load_tensor_layout(const fbs::Tensor* tensor) {
         layout.ndim = tensor->shape()->size();
         std::copy(tensor->shape()->begin(), tensor->shape()->end(),
                   layout.shape);
-        layout.init_contiguous_stride();
     }
     if (tensor->dtype()) {
-        layout.dtype = fbs::intl::load_dtype(tensor->dtype());
+        // modify data type inplace for TensorLayout
+        layout.modify_dtype_inplace(fbs::intl::load_dtype(tensor->dtype()));
     }
+    layout.init_contiguous_stride();
     return layout;
 }
 
@@ -694,6 +720,24 @@ GraphLoaderOSS::OprLoadContextImpl::load_tensor_shared() {
     return sh_ptr_ref;
 }
 
+Metadata GraphLoaderOSS::OprLoadContextImpl::load_metadata() {
+    const auto* fbmeta = m_loader->m_graph->metadata();
+    Metadata ret;
+    if (fbmeta) {
+        ret.is_valid = fbmeta->is_valid();
+        ret.graph_modified = fbmeta->graph_modified();
+        if (fbmeta->user_info()) {
+            ret.user_info = fbmeta->user_info()->str();
+            ret.has_user_info = true;
+        }
+        if (fbmeta->optimize_options()) {
+            ret.optimize_options = fbmeta->optimize_options();
+            ret.optimized_for_inference = true;
+        }
+    }
+    return ret;
+}
+
 void GraphLoaderOSS::OprLoadContextImpl::load_single_opr(
         const fbs::Operator* fbopr) {
     m_cur_opr_tensor_cnt = 0;
@@ -723,9 +767,9 @@ void GraphLoaderOSS::OprLoadContextImpl::load_single_opr(
 
     auto registry = OprRegistry::find_by_unversioned_id(fbopr->type_id());
     mgb_throw_if(!registry, SerializationError,
-                 "failed to find opr with type %s, use "
-                 "mgb.config.dump_registered_oprs() "
-                 "to get a dict that maps from opr id to opr name",
+                 "failed to find opr with type %s, use python env "
+                 "config.dump_registered_oprs() to get a dict that maps from "
+                 "opr id to opr name",
                  std::to_string(fbopr->type_id()).c_str());
 
     // load inputs
@@ -806,7 +850,7 @@ GraphLoader::LoadResult GraphLoaderOSS::load(const LoadConfig& config,
     uint32_t magic;
     m_file->read(&magic, sizeof(magic));
     mgb_throw_if(magic != MGB_MAGIC, SerializationError,
-                 "wrong magic: wanted %#08x, actual %#08x (not a MegBrain fbs "
+                 "wrong magic: wanted %#08x, actual %#08x (not a invalid fbs "
                  "model?)",
                  MGB_MAGIC, magic);
     m_file->skip(4);
@@ -827,7 +871,7 @@ GraphLoader::LoadResult GraphLoaderOSS::load(const LoadConfig& config,
     m_file->skip(tensor_begin);
 
     mgb_throw_if(!fbs::GraphBufferHasIdentifier(m_graph_buf.data()),
-                 SerializationError, "not a MegBrain fbs model");
+                 SerializationError, "invalid fbs model");
 
     {
         flatbuffers::Verifier verifier(
@@ -841,7 +885,7 @@ GraphLoader::LoadResult GraphLoaderOSS::load(const LoadConfig& config,
     m_mgb_version = m_graph->mgb_version();
     if (m_graph->mgb_version() > MGB_VERSION) {
         mgb_log_warn(
-                "loading model from future MegBrain: version=%u "
+                "loading model from future runtime: version=%u "
                 "model_version=%u",
                 MGB_VERSION, m_graph->mgb_version());
     }
@@ -866,7 +910,9 @@ GraphLoader::LoadResult GraphLoaderOSS::load(const LoadConfig& config,
     }
 
     OprLoadContextImpl ctx{this, m_graph->mgb_version()};
+    auto metadata = ctx.load_metadata();
     auto result = ctx.load_oprs();
+    result.metadata = metadata;
 
     auto fbs_end = tensor_begin + offset_to_fbs + sizeof(size) + size;
     auto cur = m_file->tell();

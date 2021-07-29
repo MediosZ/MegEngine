@@ -16,6 +16,7 @@
 #include "src/cuda/handle.h"
 #include "src/cuda/utils.h"
 
+#include "src/common/conv_bias.h"
 #include "src/common/algo_chooser.h"
 
 #include "src/cuda/cudnn_with_check.h"
@@ -28,8 +29,9 @@ void ConvBiasForwardImpl::exec(_megdnn_tensor_in src, _megdnn_tensor_in filter,
                                _megdnn_tensor_out dst,
                                const PreprocessedFilter* preprocessed_filter,
                                _megdnn_workspace workspace) {
-    check_exec(src.layout, filter.layout, bias.layout, z.layout, dst.layout,
-               workspace.size, preprocessed_filter);
+    check_exec_allow_noncontiguous(src.layout, filter.layout, bias.layout,
+                                   z.layout, dst.layout, workspace.size,
+                                   preprocessed_filter);
     AlgoBase::ExecArgs args(this, src, filter, bias, z, dst, workspace,
                             preprocessed_filter);
     auto algo = get_algorithm(this, src.layout, filter.layout, bias.layout,
@@ -83,12 +85,13 @@ ConvBiasForward::Algorithm* ConvBiasForwardImpl::get_algorithm_heuristic(
         CUDNNForwardDescs desc;
         conv_args.init_conv_desc(desc);
 #if CUDNN_MAJOR >= 7
+        auto& cudnn = static_cast<HandleImpl*>(this->handle())->cudnn();
         int max_count = 0;
-        cudnn_check(cudnnGetConvolutionForwardAlgorithmMaxCount(cudnn_handle,
+        cudnn_check(cudnn.GetConvolutionForwardAlgorithmMaxCount(cudnn_handle,
                                                                 &max_count));
         SmallVector<cudnnConvolutionFwdAlgoPerf_t> algo_perf(max_count);
         int ret_count = 0;
-        cudnn_check(cudnnGetConvolutionForwardAlgorithm_v7(
+        cudnn_check(cudnn.GetConvolutionForwardAlgorithm_v7(
                 cudnn_handle, desc.src_desc.desc, desc.filter_desc.desc,
                 desc.conv_desc.conv_desc, desc.dst_desc.desc, max_count,
                 &ret_count, algo_perf.data()));
@@ -96,8 +99,9 @@ ConvBiasForward::Algorithm* ConvBiasForwardImpl::get_algorithm_heuristic(
             auto conv_bias_algo = cb(algo_perf[i].algo);
             if (conv_bias_algo->is_available_attribute(
                         args, positive_attr, negative_attr,
-                        workspace_limit_in_bytes))
+                        workspace_limit_in_bytes)) {
                 return conv_bias_algo;
+            }
         }
 #else
         cudnnConvolutionFwdAlgo_t algo;

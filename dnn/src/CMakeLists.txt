@@ -63,7 +63,7 @@ macro (HIP_COMPILE _hip_target _hip_objs)
     add_custom_target(${_hip_target})
 
     # set return value
-    set (${_hip_objs} ${_generated_files})
+    set(${_hip_objs} ${_generated_files})
 endmacro()
 
 if (MGE_WITH_ROCM)
@@ -74,14 +74,21 @@ if (MGE_WITH_ROCM)
     # empty file to bypass this error.
     file(GLOB start.cpp.hip "" )
     list(APPEND HIP_SOURCES start.cpp.hip)
+    configure_file(
+        ${PROJECT_SOURCE_DIR}/dnn/include/hcc_detail/hcc_defs_prologue.h.in
+        ${PROJECT_BINARY_DIR}/dnn/include/hcc_detail/hcc_defs_prologue.h)
 
-    file (GLOB_RECURSE HIPSOURCES rocm/*.cpp.hip)
-    set(HIP_TARGET_NAME hip_kernel)
+    configure_file(
+        ${PROJECT_SOURCE_DIR}/dnn/include/hcc_detail/hcc_defs_epilogue.h.in
+        ${PROJECT_BINARY_DIR}/dnn/include/hcc_detail/hcc_defs_epilogue.h)
+
+    file(GLOB_RECURSE HIP_SOURCES_ rocm/*.cpp.hip)
+    set(HIP_TARGET_NAME megdnn_hip_kernel)
     set(_HIPCC_OPTIONS "-fPIC")
     set(_HCC_OPTIONS "-fPIC")
     set(_NVCC_OPTIONS "-fPIC")
 
-    list(APPEND HIP_SOURCES ${HIPSOURCES})
+    list(APPEND HIP_SOURCES ${HIP_SOURCES_})
     set_source_files_properties(${HIP_SOURCES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
     HIP_INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/dnn
         ${PROJECT_SOURCE_DIR}/dnn/include
@@ -91,13 +98,14 @@ if (MGE_WITH_ROCM)
         ${HIP_INCLUDE_DIR}
         ${MIOPEN_INCLUDE_DIR}
         ${ROCBLAS_INCLUDE_DIR}
-        ${ROCRAND_INCLUDE_DIR})
+        ${ROCRAND_INCLUDE_DIR}
+        ${AMDOCL_INCLUDE_DIR})
     hip_compile(
-       ${HIP_TARGET_NAME} HIPOBJS ${HIP_SOURCES}
-       HIPCC_OPTIONS ${_HIPCC_OPTIONS}
-       HCC_OPTIONS ${_HCC_OPTIONS}
-       NVCC_OPTIONS ${_NVCC_OPTIONS})
-    list (APPEND SOURCES ${HIPOBJS})
+        ${HIP_TARGET_NAME} HIPOBJS ${HIP_SOURCES}
+        HIPCC_OPTIONS ${_HIPCC_OPTIONS}
+        HCC_OPTIONS ${_HCC_OPTIONS}
+        NVCC_OPTIONS ${_NVCC_OPTIONS})
+    list(APPEND SOURCES ${HIPOBJS})
 endif ()
 
 if(MGE_WITH_CUDA)
@@ -105,6 +113,31 @@ if(MGE_WITH_CUDA)
     list(APPEND SOURCES ${SOURCES_})
 
     file(GLOB_RECURSE CUSOURCES cuda/*.cu)
+
+    set(CUTLASS_GEN_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/cutlass_generator/generator.py)
+    set(CUTLASS_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/cuda/cutlass/generated)
+    function(gen_cutlass_kimpl op type)
+        set(CURRENT_CUTLASS_GEN_DIR ${CUTLASS_GEN_DIR}/${op}_${type})
+        file(MAKE_DIRECTORY ${CURRENT_CUTLASS_GEN_DIR})
+        execute_process(
+            COMMAND ${PYTHON3_EXECUTABLE_WITHOUT_VERSION} ${CUTLASS_GEN_SCRIPT} --operations ${op} --type ${type} ${CURRENT_CUTLASS_GEN_DIR}
+            RESULT_VARIABLE gen_cutlass_result
+            OUTPUT_FILE ${CURRENT_CUTLASS_GEN_DIR}/gen_cutlass.log
+            ERROR_FILE ${CURRENT_CUTLASS_GEN_DIR}/gen_cutlass.log
+        )
+        if (NOT gen_cutlass_result EQUAL 0)
+            message(FATAL_ERROR "Error generating library instances. See ${CURRENT_CUTLASS_GEN_DIR}/gen_cutlass.log")
+        endif()
+    endfunction()
+    gen_cutlass_kimpl(gemm simt)
+    gen_cutlass_kimpl(gemv simt)
+    gen_cutlass_kimpl(deconv simt)
+    gen_cutlass_kimpl(conv2d simt)
+    gen_cutlass_kimpl(conv2d tensorop8816)
+    gen_cutlass_kimpl(conv2d tensorop8832)
+    file(GLOB_RECURSE CUTLASS_SOURCES ${CUTLASS_GEN_DIR}/*.cu)
+    list(APPEND SOURCES ${CUTLASS_SOURCES})
+
     list(APPEND SOURCES ${CUSOURCES})
 endif()
 
@@ -139,16 +172,18 @@ if(MGE_WITH_CUDA)
 endif()
 
 if(MGE_WITH_ROCM)
-        target_include_directories(megdnn PUBLIC
+    target_include_directories(megdnn PUBLIC
         ${HIP_INCLUDE_DIR}
         ${MIOPEN_INCLUDE_DIR}
         ${ROCBLAS_INCLUDE_DIR}
-        ${ROCRAND_INCLUDE_DIR})
-        target_link_directories(megdnn PUBLIC
+        ${ROCRAND_INCLUDE_DIR}
+        ${AMDOCL_INCLUDE_DIR})
+    target_link_directories(megdnn PUBLIC
         ${HIP_LIBRARY_DIR}
         ${MIOPEN_LIBRARY_DIR}
         ${ROCBLAS_LIBRARY_DIR}
-        ${ROCRAND_LIBRARY_DIR})
+        ${ROCRAND_LIBRARY_DIR}
+        ${AMDOCL_LIBRARY_DIR})
 endif()
 
 

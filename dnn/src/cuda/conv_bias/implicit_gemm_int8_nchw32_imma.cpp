@@ -14,6 +14,7 @@
 #include "src/cuda/conv_bias/cutlass_convolution_wrapper.cuh"
 #include "src/cuda/convolution_helper/parameter.cuh"
 #include "src/cuda/utils.h"
+#include "src/common/conv_bias.h"
 
 using namespace megdnn;
 using namespace cuda;
@@ -22,6 +23,10 @@ using namespace convolution;
 #if CUDA_VERSION >= 10020
 bool ConvBiasForwardImpl::AlgoInt8NCHW32IMMAImplicitGemm::is_available(
         const SizeArgs& args) const {
+    if (!args.src_layout->is_contiguous() ||
+        !args.dst_layout->is_contiguous()) {
+        return false;
+    }
     if (args.bias_layout->ndim <= 0)
         return false;
 
@@ -32,7 +37,7 @@ bool ConvBiasForwardImpl::AlgoInt8NCHW32IMMAImplicitGemm::is_available(
     bool available = true;
     auto&& param = args.opr->param();
     auto&& fm = args.filter_meta;
-    if (!conv_bias::check_bias_share_in_channel(*(args.bias_layout),
+    if (!check_bias_share_in_channel(*(args.bias_layout),
                                                 param.format))
         return false;
     if (param.format != Format::NCHW32 && param.format != Format::NCHW32_NCHW4)
@@ -70,8 +75,9 @@ bool ConvBiasForwardImpl::AlgoInt8NCHW32IMMAImplicitGemm::is_available(
     // only support sm_75 or later, platform should have tensorcore int8
     // support
     available &= is_compute_capability_required(7, 5);
-    // FIXME: too large filter size is not supported now 
-    available &= fh * fw <= 49;
+    // FIXME: too large filter size is not supported now
+    size_t kMaxFilterPixels = 848 / (2 * m_algo_param.warp_k / 32) - 2;
+    available &= fh * fw <= kMaxFilterPixels;
     return available;
 }
 

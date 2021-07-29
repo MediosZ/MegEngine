@@ -106,6 +106,13 @@ union OperatorParam {
     param.DctChannelSelect = 72,
     param.FakeQuant = 73,
     param.TQT = 74,
+    param.Correlation = 75,
+    param.LSQ = 76,
+    param.GammaRNG = 77,
+    param.PoissonRNG = 78,
+    param.PermutationRNG = 79,
+    param.BetaRNG = 80,
+    param.SlidingWindowTranspose = 81,
 }
 
 table Operator {
@@ -127,6 +134,13 @@ table Operator {
     name:string;
 }
 
+table Metadata {
+    is_valid:bool;
+    graph_modified:bool;
+    user_info:string;
+    optimize_options:ulong;
+}
+
 struct OutputVar {
     compact_id:uint;
     original_id:uint;
@@ -140,6 +154,7 @@ table Graph {
     nr_shared_tensor:uint;
     oprs:[Operator];
     output_vars_idx:[OutputVar];
+    metadata:Metadata;
 }
 
 root_type Graph;

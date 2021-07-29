@@ -6,3 +6,5 @@ tabulate
 tqdm
 redispy
 deprecated
+mprop
+wheel

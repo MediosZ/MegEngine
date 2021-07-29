@@ -25,7 +25,7 @@ from megengine.core.ops import builtin as ops
 from megengine.core.ops.builtin import Elemwise
 from megengine.core.tensor.utils import isscalar
 from megengine.functional import exp, log
-from megengine.jit import exclude_from_trace, trace
+from megengine.jit import GraphOptimizationConfig, exclude_from_trace, trace
 from megengine.module import Module
 from megengine.random import normal, uniform
 from megengine.utils.naming import AutoNaming
@@ -239,12 +239,39 @@ def test_dump_volatile():
     file = io.BytesIO()
     f.dump(file, optimize_for_inference=False)
     file.seek(0)
-    cg, _, outputs = G.load_graph(file)
-    (out,) = outputs
+    (out,) = G.load_graph(file).output_vars_list
     assert (
         cgtools.get_owner_opr_type(cgtools.get_owner_opr_inputs(out)[1])
         == "ImmutableTensor"
     )
+
+
+def test_dump_backward_graph():
+    x0 = tensor(np.random.randn(3, 4))
+    x1 = tensor(np.random.randn(3, 4))
+
+    gm = GradManager().attach(x0)
+
+    @trace(symbolic=True, capture_as_const=True)
+    def f(x0, x1):
+        with gm:
+            y = x0 * x1
+            gm.backward(y, F.ones_like(y))
+            dx0 = x0.grad
+        return y, dx0
+
+    y, dx0 = f(x0, x1)
+    np.testing.assert_equal(dx0.numpy(), x1)
+
+    file = io.BytesIO()
+    f.dump(file, optimize_for_inference=False)
+    file.seek(0)
+
+    infer_cg = cgtools.GraphInference(file)
+    results = list((infer_cg.run(x0, x1)).values())
+
+    np.testing.assert_equal(results[0], y)
+    np.testing.assert_equal(results[1], dx0)
 
 
 @pytest.mark.parametrize("trace_mode", [False, True])
@@ -309,12 +336,12 @@ def test_goptions_log_exp():
     f(tensor(1.0))
     _, out = mkstemp()
     f.dump(out, optimize_for_inference=False)
-    *_, outputs = G.load_graph(out)
+    outputs = G.load_graph(out).output_vars_list
     oprs_1 = cgtools.get_oprs_seq(outputs)
 
     g(tensor(1.0))
     g.dump(out, optimize_for_inference=False)
-    *_, outputs = G.load_graph(out)
+    outputs = G.load_graph(out).output_vars_list
     oprs_2 = cgtools.get_oprs_seq(outputs)
 
     assert len(oprs_1) - len(oprs_2) == 2
@@ -542,9 +569,9 @@ def test_random(shape_mode):
 def test_trace_advance_indexing(shape_mode):
     funcs = [
         lambda x, i: x[i],
-        # lambda x, i, j: x[i, j],  # FIXME
+        lambda x, i, j: x[i, j],
         lambda x, i, j: x[i, :, j, ...],
-        # lambda x, start, end: x[start:end],  # FIXME
+        lambda x, start, end: x[start:end],
         lambda x, start, end: x[:, 0, start:end, ..., 1],
         lambda x, vec: x[vec],
         lambda x, vec: x[vec, ..., 0, 1:3],
@@ -555,7 +582,7 @@ def test_trace_advance_indexing(shape_mode):
 
     inputs = {
         "x": np.random.randn(5, 5, 5, 5, 5).astype("float32"),
-        "i": 0,
+        "i": 4,
         "j": 2,
         "start": 1,
         "end": 3,
@@ -577,3 +604,30 @@ def test_trace_advance_indexing(shape_mode):
         for _ in range(3):
             result_trace = f_traced(**params)
             np.testing.assert_equal(expected, result_trace.numpy())
+
+
+@pytest.mark.require_ngpu(1)  # nvrtc backend
+def test_trace_jit_config():
+    def run(fuse_dimshuffle, fuse_reduce):
+        config = GraphOptimizationConfig()
+        config.jit_fuse_dimshuffle = fuse_dimshuffle
+        config.jit_fuse_reduce = fuse_reduce
+
+        # set opt_level = 1 to avoid fusing dimshuffle and reduce at the same time
+        @trace(opt_level=1, graph_opt_config=config)
+        def func(x):
+            return x + 1
+
+        x = tensor(2)
+        y = func(x)
+        func._compile()
+
+        options = func._graph.options
+        mapping = {None: 0, False: 1, True: 2}
+        assert options.graph_opt.jit == 0
+        assert options.graph_opt.jit_config.fuse_dimshuffle == mapping[fuse_dimshuffle]
+        assert options.graph_opt.jit_config.fuse_reduce == mapping[fuse_reduce]
+
+    for fuse_dimshuffle in [None, False, True]:
+        for fuse_reduce in [None, False, True]:
+            run(fuse_dimshuffle, fuse_reduce)

@@ -492,6 +492,9 @@ std::vector<CompNode> load_multiple_xpus(size_t num);
 //! check whether given number of GPUs is available
 bool check_gpu_available(size_t num);
 
+//! check whether given number of XPUs is available
+bool check_xpu_available(size_t num);
+
 //! check whether given number of AMD GPUs is available
 bool check_amd_gpu_available(size_t num);
 
@@ -501,23 +504,32 @@ bool check_cambricon_device_available(size_t num);
 //! check current capability >= major.minor
 bool check_compute_capability(int major, int minor);
 
+//! check current capability == major.minor
+bool check_compute_capability_eq(int major, int minor);
+
 //! check compnode avaiable
 bool check_device_type_avaiable(CompNode::DeviceType device_type);
 
 //! hook persistent cache get calls during the lifetime
 class PersistentCacheHook {
-    class HookedImpl;
-
-    std::shared_ptr<HookedImpl> m_impl;
-
 public:
-    //! if value is not available, \p val and \p val_size would be zero
-    using GetHook = thin_function<void(const std::string& category,
-                                       const void* key, size_t key_size,
-                                       const void* val, size_t val_size)>;
-    PersistentCacheHook(GetHook on_get);
+    using Hook = thin_function<void(const std::string& category,
+                                    const void* key, size_t key_size,
+                                    const void* val, size_t val_size)>;
+    PersistentCacheHook(Hook on_get, Hook on_set = default_set_hook);
+
     ~PersistentCacheHook();
+private:
+    static Hook default_set_hook;
+    class HookedImpl;
+    std::shared_ptr<HookedImpl> m_impl;
 };
+//! skip a testcase if xpu not available
+#define REQUIRE_XPU(n) do { \
+    if (!check_xpu_available(n)) \
+        return; \
+} while(0)
+
 
 //! skip a testcase if gpu not available
 #define REQUIRE_GPU(n) do { \
@@ -529,6 +541,12 @@ public:
     do {                                              \
         if (!check_compute_capability(major, minor))  \
             return;                                   \
+    } while (0)
+
+#define REQUIRE_CUDA_COMPUTE_CAPABILITY_EQ(major, minor) \
+    do {                                                 \
+        if (!check_compute_capability_eq(major, minor))  \
+            return;                                      \
     } while (0)
 
 //! skip a testcase if amd gpu not available

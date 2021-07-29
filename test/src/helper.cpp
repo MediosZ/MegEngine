@@ -337,6 +337,14 @@ std::vector<CompNode> mgb::load_multiple_xpus(size_t num) {
     return ret;
 }
 
+bool mgb::check_xpu_available(size_t num) {
+    if (CompNode::get_device_count(CompNode::DeviceType::UNSPEC) < num) {
+        mgb_log_warn("skip test case that requires %zu XPU(s)", num);
+        return false;
+    }
+    return true;
+}
+
 bool mgb::check_gpu_available(size_t num) {
     if (CompNode::get_device_count(CompNode::DeviceType::CUDA) < num) {
         mgb_log_warn("skip test case that requires %zu GPU(s)", num);
@@ -382,7 +390,37 @@ bool mgb::check_compute_capability(int major, int minor) {
     MGB_CUDA_CHECK(cudaGetDevice(&dev));
     cudaDeviceProp prop;
     MGB_CUDA_CHECK(cudaGetDeviceProperties(&prop, dev));
-    return prop.major > major || (prop.major == major && prop.minor >= minor);
+    bool available = prop.major > major || (prop.major == major && prop.minor >= minor);
+    if (!available) {
+        mgb_log_warn(
+                "This testcase is ignored due to insufficient cuda cap(got: "
+                "%d.%d, "
+                "expected: %d.%d)",
+                prop.major, prop.minor, major, minor);
+    }
+    return available;
+#else
+    MGB_MARK_USED_VAR(major);
+    MGB_MARK_USED_VAR(minor);
+    return false;
+#endif
+}
+
+bool mgb::check_compute_capability_eq(int major, int minor) {
+#if MGB_CUDA
+    int dev;
+    MGB_CUDA_CHECK(cudaGetDevice(&dev));
+    cudaDeviceProp prop;
+    MGB_CUDA_CHECK(cudaGetDeviceProperties(&prop, dev));
+    bool available = prop.major == major && prop.minor == minor;
+    if (!available) {
+        mgb_log_warn(
+                "This testcase is ignored due to insufficient cuda cap(got: "
+                "%d.%d, "
+                "expected: %d.%d)",
+                prop.major, prop.minor, major, minor);
+    }
+    return available;
 #else
     MGB_MARK_USED_VAR(major);
     MGB_MARK_USED_VAR(minor);
@@ -422,12 +460,13 @@ mgb::make_callback_copy(SymbolVar dev, HostTensorND &host, bool sync) {
 
 /* ========================== PersistentCacheHook ========================== */
 class PersistentCacheHook::HookedImpl final : public PersistentCache {
-    GetHook m_on_get;
+    Hook m_on_get, m_on_set;
 
 public:
     std::shared_ptr<PersistentCache> orig_impl;
 
-    HookedImpl(GetHook on_get) : m_on_get{std::move(on_get)} {}
+    HookedImpl(Hook on_get, Hook on_set)
+            : m_on_get{std::move(on_get)}, m_on_set{std::move(on_set)} {}
 
     Maybe<Blob> get(const std::string& category, const Blob& key) override {
         auto ret = orig_impl->get(category, key);
@@ -438,12 +477,18 @@ public:
 
     void put(const std::string& category, const Blob& key,
              const Blob& value) override {
+        m_on_set(category, key.ptr, key.size, value.ptr,
+                 value.size);
         orig_impl->put(category, key, value);
     }
 };
 
-PersistentCacheHook::PersistentCacheHook(GetHook on_get)
-        : m_impl{std::make_shared<HookedImpl>(std::move(on_get))} {
+PersistentCacheHook::Hook PersistentCacheHook::default_set_hook =
+        [](const std::string&, const void*, size_t, const void*, size_t) {};
+
+PersistentCacheHook::PersistentCacheHook(Hook on_get, Hook on_set)
+        : m_impl{std::make_shared<HookedImpl>(std::move(on_get),
+                                              std::move(on_set))} {
     m_impl->orig_impl = PersistentCache::set_impl(m_impl);
 }
 

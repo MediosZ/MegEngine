@@ -35,7 +35,7 @@ def _dump_and_load(func, symbolic, keep_opr_name=True):
         keep_var_name=2,
     )
     file.seek(0)
-    *_, outputs = G.load_graph(file)
+    outputs = G.load_graph(file).output_vars_list
     ops = cgtools.get_oprs_seq(outputs)
     return ops
 
@@ -155,13 +155,13 @@ def test_with_submodule_in_container(symbolic):
     m = Simple("simple")
 
     ops = _dump_and_load(m, symbolic)
-    assert ops[-1].outputs[0].name == "simple.l2.l2-1.ADD"
-    assert ops[-1].name == "simple.l2.l2-1.ADD"
-    assert ops[-2].name == "simple.l2.l2-1.MatrixMul"
-    assert ops[-3].name == "simple.l1.1.ADD"
-    assert ops[-4].name == "simple.l1.1.MatrixMul"
-    assert ops[-5].name == "simple.l0.1.ADD"
-    assert ops[-6].name == "simple.l0.1.MatrixMul"
+    assert ops[-1].outputs[0].name == "simple.l0.1.ADD[2]"
+    assert ops[-1].name == "simple.l0.1.ADD[2]"
+    assert ops[-2].name == "simple.l0.1.MatrixMul[2]"
+    assert ops[-3].name == "simple.l0.1.ADD[1]"
+    assert ops[-4].name == "simple.l0.1.MatrixMul[1]"
+    assert ops[-5].name == "simple.l0.1.ADD[0]"
+    assert ops[-6].name == "simple.l0.1.MatrixMul[0]"
 
 
 @pytest.mark.parametrize("symbolic", [False, True])
@@ -223,7 +223,7 @@ def test_catch_input_name(tensor_name, var_name):
     file = io.BytesIO()
     func.dump(file, optimize_for_inference=False, keep_opr_name=True, keep_var_name=2)
     file.seek(0)
-    *_, outputs = G.load_graph(file)
+    outputs = G.load_graph(file).output_vars_list
     op = cgtools.get_oprs_seq(outputs)[-1]
     assert op.inputs[0].name == var_name
 

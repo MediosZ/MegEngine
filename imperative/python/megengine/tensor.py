@@ -14,7 +14,7 @@ from .core._imperative_rt import CompNode
 from .core._imperative_rt.core2 import Tensor as _Tensor
 from .core._imperative_rt.core2 import apply
 from .core._trace_option import use_symbolic_shape
-from .core._wrap import device as as_device
+from .core._wrap import as_device
 from .core.ops.builtin import Copy, GetVarShape
 from .core.tensor.array_method import ArrayMethodMixin
 from .device import _valid_device, get_default_device
@@ -30,6 +30,7 @@ class Tensor(_Tensor, ArrayMethodMixin):
     A tensor object represents a multidimensional, homogeneous array of fixed-size items.
 
     :param data: The value of returned Tensor.
+    :type data: Tensor, :class:`~.numpy.ndarray`, :class:`list` or python number.
     :param dtype: The dtype of returned Tensor. Uses data's dtype if not specified.
     :param device: The desired device of returned Tensor. Uses :func:`get_default_device` if not specified.
     :param is_const: Whether make it a ``ImutableTensor`` in tracing mode.
@@ -43,7 +44,7 @@ class Tensor(_Tensor, ArrayMethodMixin):
 
     def __new__(
         cls,
-        data: Union["Tensor", np.ndarray, list, "scalar"] = None,
+        data: Union["Tensor", np.ndarray, list, int, float] = None,
         dtype: np.dtype = None,
         device: str = None,
         is_const: bool = False,
@@ -76,7 +77,7 @@ class Tensor(_Tensor, ArrayMethodMixin):
 
     def __init__(
         self,
-        data: Union["Tensor", np.ndarray, list, "scalar"],
+        data: Union["Tensor", np.ndarray, list, int, float],
         dtype: np.dtype = None,
         device: str = None,
         is_const: bool = False,
@@ -174,7 +175,7 @@ class Tensor(_Tensor, ArrayMethodMixin):
     def set_value(self, value):
         self._reset(value)
 
-    @deprecated(version="1.0", reason="use *= 0 instead")
+    @deprecated(version="1.0", reason="use ``*= 0`` instead")
     def reset_zero(self):
         self *= 0
 
@@ -246,4 +247,11 @@ tensor = Tensor
 class Parameter(Tensor):
     r"""
     A kind of Tensor that is to be considered a module parameter.
+
+    .. note::
+
+        Operations happened on Parameter usually return a Tensor instead of Parameter.
+        For example, with a Parameter ``x``, ``x.reshape/to/sum/...`` will result into a Tensor.
+        Any operations between Parameter and Tensor will have Tensor as outputs.
+
     """

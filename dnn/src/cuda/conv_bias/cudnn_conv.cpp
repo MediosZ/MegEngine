@@ -23,6 +23,23 @@ bool ConvBiasForwardImpl::AlgoCUDNNConv::is_available(
     if (args.z_layout->ndim > 0)
         return false;
 
+    if (args.filter_meta.format != Param::Format::NCHW &&
+        args.filter_meta.format != Param::Format::NHWC) {
+        if (!args.src_layout->is_contiguous() ||
+            !args.dst_layout->is_contiguous()) {
+            return false;
+        }
+    }
+
+    // FIXME: cudnn cannot handle the case when the initial value of dst tensor
+    // contains nan and beta is zero, because the result of 0.f * nan is still
+    // nan
+    if (args.src_layout->dtype.enumv() == DTypeEnum::QuantizedS8 &&
+        args.dst_layout->dtype.enumv() == DTypeEnum::Float32 &&
+        args.opr->param().format == param::ConvBias::Format::NCHW) {
+        return false;
+    }
+
     auto dst_layout = *args.dst_layout;
     if (dst_layout.dtype.enumv() != args.bias_layout->dtype.enumv()) {
         dst_layout.dtype = DType();
@@ -39,7 +56,8 @@ bool ConvBiasForwardImpl::AlgoCUDNNConv::is_available(
     conv_args.init_conv_desc(D);
 
     size_t workspace_size;
-    auto status = cudnnGetConvolutionForwardWorkspaceSize(
+    auto& cudnn = conv_args.handle->cudnn();
+    auto status = cudnn.GetConvolutionForwardWorkspaceSize(
             conv_args.handle->cudnn_handle(), D.src_desc.desc,
             D.filter_desc.desc, D.conv_desc.conv_desc, D.dst_desc.desc,
             m_cudnn_enum, &workspace_size);
@@ -65,7 +83,8 @@ WorkspaceBundle ConvBiasForwardImpl::AlgoCUDNNConv::get_workspace_bundle(
     conv_args.init_conv_desc(D);
 
     size_t conv_workspace_size;
-    auto status = cudnnGetConvolutionForwardWorkspaceSize(
+    auto& cudnn = conv_args.handle->cudnn();
+    auto status = cudnn.GetConvolutionForwardWorkspaceSize(
             conv_args.handle->cudnn_handle(), D.src_desc.desc,
             D.filter_desc.desc, D.conv_desc.conv_desc, D.dst_desc.desc,
             m_cudnn_enum, &conv_workspace_size);

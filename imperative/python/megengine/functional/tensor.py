@@ -6,25 +6,18 @@
 # Unless required by applicable law or agreed to in writing,
 # software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-import math
 from typing import Iterable, Optional, Sequence, Union
 
 import numpy as np
 
 from ..core._imperative_rt import CompNode
-from ..core._imperative_rt.core2 import SymbolVar, apply
-from ..core._wrap import device as as_device
+from ..core._imperative_rt.core2 import SymbolVar, apply, dtype_promotion
+from ..core._wrap import as_device
 from ..core.ops import builtin
 from ..core.ops.builtin import Copy, Identity
 from ..core.ops.special import Const
 from ..core.tensor.array_method import _broadcast, _remove_axis
-from ..core.tensor.utils import (
-    astensor1d,
-    convert_inputs,
-    convert_single_value,
-    dtype_promotion,
-    get_device,
-)
+from ..core.tensor.utils import astensor1d, convert_inputs, get_device
 from ..device import get_default_device
 from ..tensor import Tensor
 from .elemwise import ceil, floor_div
@@ -45,6 +38,7 @@ __all__ = [
     "ones_like",
     "repeat",
     "reshape",
+    "roll",
     "split",
     "squeeze",
     "stack",
@@ -182,6 +176,29 @@ def zeros_like(inp: Union[Tensor, SymbolVar]) -> Union[Tensor, SymbolVar]:
 def ones_like(inp: Union[Tensor, SymbolVar]) -> Union[Tensor, SymbolVar]:
     """
     Returns a ones tensor with the same shape as input tensor.
+
+    :param inp: input tensor.
+    :return: output ones tensor.
+
+    Examples:
+
+    .. testcode::
+
+        import numpy as np
+        from megengine import tensor
+        import megengine.functional as F
+
+        inp = tensor(np.arange(1, 7, dtype=np.int32).reshape(2,3))
+        out = F.ones_like(inp)
+        print(out.numpy())
+
+    Outputs:
+
+    .. testoutput::
+
+        [[1 1 1]
+         [1 1 1]]
+
     """
     return full_like(inp, 1.0)
 
@@ -191,6 +208,29 @@ def full_like(
 ) -> Union[Tensor, SymbolVar]:
     """
     Returns a tensor filled with given value with the same shape as input tensor.
+
+    :param inp: input tensor.
+    :param value: target value.
+    :return: output tensor.
+
+    Examples:
+    .. testcode::
+
+        import numpy as np
+        from megengine import tensor
+        import megengine.functional as F
+
+        inp = tensor(np.arange(1, 7, dtype=np.int32).reshape(2,3))
+        out = F.full_like(inp, 2)
+        print(out.numpy())
+
+    Outputs:
+
+    .. testoutput::
+
+        [[2 2 2]
+         [2 2 2]]
+
     """
     (x,) = Const(value, dtype=inp.dtype, device=inp.device)(inp)
     if inp.shape is ():
@@ -264,6 +304,7 @@ def concat(inps: Iterable[Tensor], axis: int = 0, device=None) -> Tensor:
     if len(inps) == 1:
         return inps[0]
 
+    # FIXME: remove this convert_inputs
     inps = convert_inputs(*inps, device=device)
     if device is None:
         device = get_device(inps)
@@ -334,7 +375,7 @@ def split(inp, nsplits_or_sections, axis=0):
         x = tensor(np.random.random((10, 20)), dtype=np.float32)
         y = F.split(x, 3)
         z = F.split(x, [6, 17], axis=1)
-        
+
         print([i.numpy().shape for i in y])
         print([i.numpy().shape for i in z])
 
@@ -616,6 +657,7 @@ def where(mask: Tensor, x: Tensor, y: Tensor) -> Tensor:
 
     .. testcode::
 
+        import numpy as np
         from megengine import tensor
         import megengine.functional as F
         mask = tensor(np.array([[True, False], [False, True]], dtype=np.bool))
@@ -633,7 +675,6 @@ def where(mask: Tensor, x: Tensor, y: Tensor) -> Tensor:
          [7. 4.]]
     """
 
-    x, y = convert_inputs(x, y)
     if not isinstance(x, Tensor):
         raise TypeError("input x must be a tensor")
     if not isinstance(y, Tensor):
@@ -644,6 +685,12 @@ def where(mask: Tensor, x: Tensor, y: Tensor) -> Tensor:
         raise ValueError("mask must be bool")
     if x.device != mask.device:
         raise ValueError("ambiguous device: {} vs {}".format(x.device, mask.device))
+
+    dtype = dtype_promotion(x, y)
+    if x.dtype != dtype:
+        x = x.astype(dtype)
+    if y.dtype != dtype:
+        y = y.astype(dtype)
 
     v0, index0 = cond_take(mask, x)
     v1, index1 = cond_take(~mask, y)
@@ -686,9 +733,9 @@ def cond_take(mask: Tensor, x: Tensor) -> Tensor:
         [1. 4.] [0 3]
 
     """
-    if not isinstance(x, Tensor):
+    if not isinstance(x, (Tensor, SymbolVar)):
         raise TypeError("input must be a tensor")
-    if not isinstance(mask, Tensor):
+    if not isinstance(mask, (Tensor, SymbolVar)):
         raise TypeError("mask must be a tensor")
     if mask.dtype != np.bool_:
         raise ValueError("mask must be bool")
@@ -848,9 +895,23 @@ def expand_dims(inp: Tensor, axis: Union[int, Sequence[int]]) -> Tensor:
         return list(map(int, axis))
 
     axis = get_axes()
-    ndim = inp.ndim + len(axis)
-    axis = sorted(i + ndim if i < 0 else i for i in axis)
-
+    try:
+        ndim = inp.ndim + len(axis)
+        axis = sorted(i + ndim if i < 0 else i for i in axis)
+    except ValueError:
+        if any([ind < 0 for ind in axis]):
+            raise IndexError(
+                "Does not support negative index when tensor's ndim is unknown"
+            )
+        axis = sorted(axis)
+    assert axis, "axis could not be empty"
+    if inp._isscalar():
+        assert axis[0] == 0, "invalid axis {} for ndim 0".format(axis[0])
+        if len(axis) == 1:
+            inp = copy(inp, device=None)
+            inp._unsetscalar()
+            return inp
+        axis = axis[1:]
     op = builtin.AddAxis(axis=axis)
     (result,) = apply(op, inp)
     return result
@@ -983,12 +1044,10 @@ def arange(
     if stop is None:
         start, stop = 0, start
 
-    if isinstance(start, Tensor):
-        start = start.astype("float32")
-    if isinstance(stop, Tensor):
-        stop = stop.astype("float32")
-    if isinstance(step, Tensor):
-        step = step.astype("float32")
+    start = Tensor(start, dtype="float32")
+    stop = Tensor(stop, dtype="float32")
+    step = Tensor(step, dtype="float32")
+
     num = ceil((stop - start) / step)
     stop = start + step * (num - 1)
     result = linspace(start, stop, num, device=device)
@@ -1150,12 +1209,18 @@ def copy(inp, device=None):
     .. testcode::
 
         import numpy as np
+        import platform
         from megengine import tensor
+        from megengine.device import get_device_count
         import megengine.functional as F
 
         x = tensor([1, 2, 3], np.int32)
-        y = F.copy(x, "xpu1")
-        print(y.numpy())
+        if 1 == get_device_count("gpu"):
+            y = F.copy(x, "cpu1")
+            print(y.numpy())
+        else:
+            y = F.copy(x, "xpu1")
+            print(y.numpy())
 
     Outputs:
 
@@ -1166,3 +1231,75 @@ def copy(inp, device=None):
     if device is None:
         return apply(Identity(), inp)[0]
     return apply(Copy(comp_node=as_device(device).to_c()), inp)[0]
+
+
+def roll(
+    inp: Tensor,
+    shift: Union[int, Iterable[int]],
+    axis: Optional[Union[int, Iterable[int]]] = None,
+):
+    """
+    Roll the tensor along the given axis(or axes). Elements that are shifted
+    beyond the last position are re-introduced at the first position.
+
+    :param inp: input tensor.
+    :param shift: the number of places by which the elements of the tensor are
+        shifted. If shift is a tuple, axis must be a tuple of the same size,
+        and each axis will be rolled by the corresponding shift value.
+    :param axis: axis along which to roll. If axis is not specified, the tensor
+        will be flattened before rolling and then restored to the original shape.
+        Duplicate axes is allowed if it is a tuple. Default: None.
+
+    Examples:
+
+    .. testcode::
+
+        import numpy as np
+        from megengine import tensor
+        import megengine.functional as F
+
+        x = tensor([[1,2],[3,4],[5,6]], np.int32)
+        y = F.roll(x, 1, 0)
+        print(y.numpy())
+
+    Outputs:
+
+    .. testoutput::
+
+        [[5 6]
+         [1 2]
+         [3 4]]
+
+    """
+    shp_bak = None
+    if axis is None:
+        shp_bak = inp.shape
+        inp = inp.flatten()
+        axis = 0
+    shp = inp.shape
+    dim = len(shp)
+    if isinstance(shift, int):
+        assert isinstance(axis, int)
+        shift, axis = [shift,], [axis,]
+    assert len(shift) == len(axis)
+    out = inp
+    for i in range(len(shift)):
+        axis_ = axis[i]
+        shift_ = shift[i]
+        axis_normalized_ = axis_ + dim if axis_ < 0 else axis_
+        assert (
+            dim > axis_normalized_ >= 0
+        ), "axis out of range (expected to be in range of [{}, {}], but got {})".format(
+            -dim, dim - 1, axis_
+        )
+        if shift_ == 0:
+            continue
+        size = shp[axis_normalized_]
+        if shift_ > 0:
+            a, b = split(out, [size - shift_,], axis=axis_normalized_)
+        else:
+            a, b = split(out, [-shift_,], axis=axis_normalized_)
+        out = concat((b, a), axis=axis_normalized_)
+    if shp_bak is not None:
+        out = out.reshape(shp_bak)
+    return out

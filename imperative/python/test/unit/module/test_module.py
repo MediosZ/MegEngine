@@ -368,10 +368,10 @@ class AssertModule(Module):
 
 
 def test_assert_message():
-    m = AssertModule()
     with pytest.raises(
         AssertionError, match="keys for Tensor and Module must be str, error key: True"
     ):
+        m = AssertModule()
         list(m._flatten())
 
 
@@ -471,39 +471,6 @@ def test_pickle_module():
 
     np.testing.assert_allclose(pred0.numpy(), pred1.numpy(), atol=5e-6)
     np.testing.assert_allclose(pred0.numpy(), pred2.numpy(), atol=5e-6)
-
-
-def test_load_quantized():
-    from megengine.core.tensor import dtype
-
-    data_shape = (2, 28)
-    data = tensor(np.random.random(data_shape), dtype="float32")
-    data = data.astype(dtype.qint8(0.1))
-    mlp = MLP()
-    quantize_qat(mlp)
-    quantize(mlp)
-    mlp.dense0.weight = Parameter(mlp.dense0.weight.astype(dtype.qint8(0.001)).numpy())
-    mlp.dense1.weight = Parameter(mlp.dense1.weight.astype(dtype.qint8(0.0002)).numpy())
-    mlp.eval()
-    pred0 = mlp(data)
-
-    with BytesIO() as fout:
-        mge.save(mlp.state_dict(), fout)
-        fout.seek(0)
-        checkpoint = mge.load(fout)
-        # change mlp weight.
-        mlp.dense0.weight = Parameter(
-            mlp.dense0.weight.astype(dtype.qint8(0.00001)).numpy()
-        )
-        mlp.dense1.weight = Parameter(
-            mlp.dense1.weight.astype(dtype.qint8(0.2)).numpy()
-        )
-        mlp.load_state_dict(checkpoint)
-        pred1 = mlp(data)
-
-    np.testing.assert_allclose(
-        pred0.astype("float32").numpy(), pred1.astype("float32").numpy(), atol=5e-6
-    )
 
 
 def test_repr_basic():
@@ -624,4 +591,35 @@ def test_repr_module_delete():
     net = ConvModel3()
     del net.softmax
     output = net.__repr__()
+    assert output == ground_truth
+
+
+def test_repr_module_reset_attr():
+    class ResetAttrModule(Module):
+        def __init__(self, flag):
+            super().__init__()
+            if flag:
+                self.a = None
+                self.a = Linear(3, 5)
+            else:
+                self.a = Linear(3, 5)
+                self.a = None
+
+        def forward(self, x):
+            if self.a:
+                x = self.a(x)
+            return x
+
+    ground_truth = [
+        (
+            "ResetAttrModule(\n"
+            "  (a): Linear(in_features=3, out_features=5, bias=True)\n"
+            ")"
+        ),
+        ("ResetAttrModule()"),
+    ]
+
+    m0 = ResetAttrModule(True)
+    m1 = ResetAttrModule(False)
+    output = [m0.__repr__(), m1.__repr__()]
     assert output == ground_truth

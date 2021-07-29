@@ -1,3 +1,11 @@
+# MegEngine is Licensed under the Apache License, Version 2.0 (the "License")
+#
+# Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
 import platform
 
 import numpy as np
@@ -5,7 +13,7 @@ import pytest
 
 import megengine as mge
 import megengine.distributed as dist
-from megengine.distributed.helper import get_device_count_by_fork
+from megengine.device import get_device_count
 from megengine.quantization import QuantMode, create_qparams
 from megengine.quantization.observer import (
     ExponentialMovingAverageObserver,
@@ -70,7 +78,7 @@ def test_passive_observer():
 @pytest.mark.require_ngpu(2)
 @pytest.mark.isolated_distributed
 def test_sync_min_max_observer():
-    word_size = get_device_count_by_fork("gpu")
+    word_size = get_device_count("gpu")
     x = np.random.rand(3 * word_size, 3, 3, 3).astype("float32")
     np_min, np_max = x.min(), x.max()
 
@@ -88,7 +96,7 @@ def test_sync_min_max_observer():
 @pytest.mark.require_ngpu(2)
 @pytest.mark.isolated_distributed
 def test_sync_exponential_moving_average_observer():
-    word_size = get_device_count_by_fork("gpu")
+    word_size = get_device_count("gpu")
     t = np.random.rand()
     x1 = np.random.rand(3 * word_size, 3, 3, 3).astype("float32")
     x2 = np.random.rand(3 * word_size, 3, 3, 3).astype("float32")

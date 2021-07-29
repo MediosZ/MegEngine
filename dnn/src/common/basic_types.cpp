@@ -195,13 +195,14 @@ bool TensorShape::is_empty() const {
 /* ===================== TensorLayout =====================  */
 TensorLayout::TensorLayout() = default;
 
-TensorLayout::TensorLayout(DType dtype_) : dtype{dtype_} {}
+TensorLayout::TensorLayout(DType dtype_)
+        : dtype{dtype_}, format{Format(dtype)} {}
 
 TensorLayout::TensorLayout(DType dtype_, Format format_)
         : dtype{dtype_}, format{format_} {}
 
 TensorLayout::TensorLayout(const TensorShape& shape, DType dtype)
-        : TensorLayout(shape, dtype, DefaultTensorFormat::make()) {}
+        : TensorLayout(shape, dtype, Format(dtype)) {}
 
 TensorLayout::TensorLayout(const TensorShape& shape, DType dtype,
                            TensorFormat format_)
@@ -211,7 +212,7 @@ TensorLayout::TensorLayout(const TensorShape& shape, DType dtype,
 
 TensorLayout::TensorLayout(const TensorShape& shape,
                            const std::vector<ptrdiff_t>& stride, DType dtype)
-        : TensorLayout(shape, stride, dtype, DefaultTensorFormat::make()) {}
+        : TensorLayout(shape, stride, dtype, Format(dtype)) {}
 
 TensorLayout::TensorLayout(const TensorShape& shape,
                            const std::vector<ptrdiff_t>& stride, DType dtype,
@@ -279,6 +280,11 @@ void TensorLayout::add_axis_inplace(size_t axis, size_t shape,
     }
     this->shape[axis] = shape;
     this->stride[axis] = stride;
+}
+
+void TensorLayout::modify_dtype_inplace(DType dtype_) {
+    dtype = dtype_;
+    format = Format(dtype);
 }
 
 bool TensorLayout::is_contiguous() const {
@@ -409,6 +415,27 @@ bool TensorLayout::eq_layout(const TensorLayout& rhs) const {
 
 TensorLayout::Span TensorLayout::span() const {
     return format.impl()->span_spec(*this);
+}
+
+size_t TensorLayout::access_bytes() const {
+    megdnn_assert(dtype.valid());
+    auto contig = collapse_contiguous();
+    size_t ret = 0;
+    if (dtype.is_low_bit()) {
+        ret = 1;
+        int align_size_in_elements = 8 / dtype.low_bit();
+        for (size_t i = 0; i < contig.ndim; ++i) {
+            if (contig.stride[i] == 1) {
+                ret *= round_up((int)contig.shape[i], align_size_in_elements);
+            } else {
+                ret *= contig.shape[i];
+            }
+        }
+        ret /= align_size_in_elements;
+    } else {
+        ret = dtype.size(total_nr_elems());
+    }
+    return ret;
 }
 
 TensorLayout TensorLayout::broadcast(const TensorShape& tshape) const {

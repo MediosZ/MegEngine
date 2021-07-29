@@ -68,7 +68,10 @@ class SubTensorSpec {
 
         //! get offset measured in bytes
         ptrdiff_t offset_byte() const {
-            return m_offset_elem * m_layout.dtype.size();
+            //! for lowbit cases, offset must aligned to bytes
+            mgb_assert(!m_layout.dtype.is_low_bit() ||
+                       !(m_offset_elem * m_layout.dtype.low_bit() % 8));
+            return m_layout.dtype.size(m_offset_elem);
         }
 
         /*!
@@ -174,6 +177,13 @@ class TensorStorage {
          */
         size_t size() const {
             return m_size;
+        }
+
+        /*!
+         * \brief offset on allocated block in bytes
+         */
+        size_t offset() const {
+            return m_offset;
         }
 
         //! get underlying comp node; error would be raised if it is invalid

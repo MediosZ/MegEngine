@@ -25,7 +25,8 @@ public:
     size_t get_workspace(const KernSizeParam&) const override { return 0; }
     kern_t get_kern(const KernSizeParam&) const override;
     AlgoAttribute attribute() const override {
-        return AlgoAttribute::REPRODUCIBLE;
+        return AlgoAttribute::REPRODUCIBLE |
+               AlgoAttribute::ACCURACY_DEPEND_ON_BATCH;
     }
     PackMode packmode() const override { return PackMode::NO_PACK; }
     MEGDNN_OVERRIDE_MATMUL_DESC(8, 16, 1, 4, AlgoDataType::FLOAT32, DEFAULT)
@@ -36,7 +37,8 @@ public:
 class MatrixMulImpl::AlgoF32MKLPackA : public AlgoBase {
 public:
     AlgoAttribute attribute() const override {
-        return AlgoAttribute::REPRODUCIBLE;
+        return AlgoAttribute::REPRODUCIBLE |
+               AlgoAttribute::ACCURACY_DEPEND_ON_BATCH;
     }
     const char* name() const override { return "X86_F32_MKL_PACKA"; }
     bool usable(const KernSizeParam&) const override;
@@ -135,7 +137,8 @@ public:
 class MatrixMulImpl::AlgoF32MK8_8x8 : public AlgoBase {
 public:
     AlgoAttribute attribute() const override {
-        return AlgoAttribute::REPRODUCIBLE;
+        return AlgoAttribute::REPRODUCIBLE |
+               AlgoAttribute::USABLE_DEPEND_ON_SHAPE;
     }
     const char* name() const override { return "X86_F32MK8_8X8"; }
     bool usable(const KernSizeParam&) const override;

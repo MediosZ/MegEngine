@@ -9,6 +9,7 @@
 from functools import partial
 
 import numpy as np
+import pytest
 from utils import opr_test
 
 import megengine.functional as F
@@ -42,6 +43,14 @@ def common_test_reduce(opr, ref_opr):
         opr_test(cases, opr, ref_fn=lambda x: ref_opr(x).astype(np.int32))
         # test all axises in range of input shape
         for axis in range(0, 3):
+            opr_test(
+                cases,
+                opr,
+                ref_fn=lambda x: ref_opr(x, axis=axis).astype(np.int32),
+                axis=axis,
+            )
+            # test negative axis
+            axis = axis - len(data1_shape)
             opr_test(
                 cases,
                 opr,
@@ -137,3 +146,61 @@ def test_normalize():
     cases[0]["input"][0, 0, 0, :] = 0
     cases[1]["input"][0, 0, 0, :] = 0
     opr_test(cases, partial(F.normalize, axis=3), ref_fn=partial(np_normalize, axis=3))
+
+
+def test_sum_neg_axis():
+    shape = (2, 3)
+    data = np.random.random(shape).astype(np.float32)
+    for axis in (-1, -2, (-2, 1), (-1, 0)):
+        get = F.sum(tensor(data), axis=axis)
+        ref = np.sum(data, axis=axis)
+        np.testing.assert_allclose(get.numpy(), ref, rtol=1e-6)
+    with pytest.raises(AssertionError):
+        F.sum(tensor(data), axis=(-1, 1))
+
+
+def test_has_inf():
+    shape = (32, 3, 32, 32)
+    data = np.random.random(shape).astype(np.float32)
+    rst = F.math._has_inf(tensor(data))
+    np.testing.assert_equal(rst.numpy(), [0])
+
+    data[0][0][0][0] = float("inf")
+    rst = F.math._has_inf(tensor(data))
+    np.testing.assert_equal(rst.numpy(), [1])
+
+
+@pytest.mark.parametrize("descending", [True, False])
+@pytest.mark.parametrize("sorted", [True, False])
+@pytest.mark.parametrize("inp1d", [True, False])
+@pytest.mark.parametrize("kth_only", [True, False])
+def test_topk(descending, sorted, inp1d, kth_only):
+    k = 3
+    if inp1d:
+        data = np.random.permutation(7)
+    else:
+        data = np.random.permutation(5 * 7).reshape(5, 7)
+    data = data.astype(np.int32)
+
+    def np_sort(x):
+        if descending:
+            return np.sort(x)[..., ::-1]
+        return np.sort(x)
+
+    res = F.topk(
+        tensor(data), k, descending=descending, no_sort=(not sorted), kth_only=kth_only
+    )
+
+    values, indices = res
+    values = values.numpy()
+    indices = indices.numpy()
+    if kth_only:
+        np.testing.assert_equal(
+            values, np.take_along_axis(data, indices[..., None], -1).squeeze(-1)
+        )
+        np.testing.assert_equal(values, np_sort(data)[..., k - 1])
+    else:
+        np.testing.assert_equal(values, np.take_along_axis(data, indices, -1))
+        if not sorted:
+            values = np_sort(values)
+        np.testing.assert_equal(values, np_sort(data)[..., :k])

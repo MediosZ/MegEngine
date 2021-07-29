@@ -308,6 +308,8 @@ class dt_qulowbit {
             return _;
         }
 
+        MEGDNN_DEVICE uint8_t as_storage() const { return _; }
+
         MEGDNN_HOST MEGDNN_DEVICE explicit dt_qulowbit(uint8_t val):_(val) {}
 #ifdef MEGDNN_CC_HOST
         explicit operator uint8_t() { return _; }
@@ -331,6 +333,8 @@ class dt_qlowbit {
         MEGDNN_DEVICE int8_t as_int8() const {
             return _;
         }
+
+        MEGDNN_DEVICE int8_t as_storage() const { return _; }
 
         MEGDNN_HOST MEGDNN_DEVICE explicit dt_qlowbit(int8_t val):_(val) {}
 #ifdef MEGDNN_CC_HOST
@@ -505,8 +509,17 @@ class DType {
             return std::numeric_limits<size_t>::max() >> m_trait->size_log;
         }
 
-        bool is_low_bit() const {
-            return m_trait->low_bit != 0;
+        size_t low_bit() const { return m_trait->low_bit; }
+
+        bool is_low_bit() const { return low_bit() != 0; }
+
+        bool is_quantized_lowbit() const {
+            return low_bit() != 0 &&
+#if MEGDNN_CC_HOST
+                   category() == DTypeCategory::QUANTIZED;
+#else
+                   category().ev == DTypeCategory::Ev::QUANTIZED;
+#endif
         }
 
         /*!

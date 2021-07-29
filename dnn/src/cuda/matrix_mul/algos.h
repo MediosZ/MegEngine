@@ -114,7 +114,9 @@ public:
     void exec(const ExecArgs& args) const override;
     MEGDNN_DECL_ALGO_TYPE(CUDA_CUBLAS)
     AlgoAttribute attribute() const override {
-        return AlgoAttribute::REPRODUCIBLE;
+        return AlgoAttribute::REPRODUCIBLE |
+               AlgoAttribute::USABLE_DEPEND_ON_SHAPE |
+               AlgoAttribute::ACCURACY_DEPEND_ON_BATCH;
     }
 };
 
@@ -141,7 +143,8 @@ public:
     void exec(const ExecArgs& args) const override;
     MEGDNN_DECL_ALGO_TYPE(CUDA_CUBLASLT)
     AlgoAttribute attribute() const override {
-        return AlgoAttribute::REPRODUCIBLE;
+        return AlgoAttribute::REPRODUCIBLE |
+               AlgoAttribute::ACCURACY_DEPEND_ON_BATCH;
     }
 };
 #endif
@@ -157,7 +160,7 @@ public:
     void exec(const ExecArgs& args) const override;
     MEGDNN_DECL_ALGO_TYPE(CUDA_NAIVE)
     AlgoAttribute attribute() const override {
-        return AlgoAttribute::REPRODUCIBLE;
+        return AlgoAttribute::REPRODUCIBLE | AlgoAttribute::NAIVE;
     }
 };
 
@@ -231,7 +234,8 @@ public:
     const char* name() const override { return m_name.c_str(); }
     void exec(const ExecArgs& args) const override;
     AlgoAttribute attribute() const override {
-        return AlgoAttribute::REPRODUCIBLE;
+        return AlgoAttribute::REPRODUCIBLE |
+               AlgoAttribute::USABLE_DEPEND_ON_SHAPE;
     }
     MEGDNN_DECL_ALGO_TYPE(CUDA_FLOAT32_SIMT_SPLIT_K)
 

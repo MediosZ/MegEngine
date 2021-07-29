@@ -8,11 +8,12 @@
 # "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 from typing import Iterable, Optional, Tuple, Union
 
+import numpy as np
+
 from ..core._imperative_rt.core2 import apply
 from ..core.ops import builtin
 from ..core.tensor import megbrain_graph, utils
 from ..core.tensor.utils import astensor1d
-from ..jit.tracing import is_tracing
 from ..tensor import Tensor
 from .elemwise import floor
 from .math import argsort
@@ -99,10 +100,46 @@ def roi_pooling(
         output_shape = (output_shape, output_shape)
 
     op = builtin.ROIPooling(mode=mode, scale=scale)
-    inp, rois = utils.convert_inputs(inp, rois)
     result, _ = apply(
         op, inp, rois, Tensor(output_shape, dtype="int32", device=inp.device)
     )
+    return result
+
+
+def correlation(
+    data1: Tensor,
+    data2: Tensor,
+    kernel_size: int = 1,
+    max_displacement: int = 1,
+    stride1: int = 1,
+    stride2: int = 1,
+    pad_size: int = 0,
+    is_multiply: bool = True,
+) -> Tensor:
+    """ Applies correlation to inputs.
+
+    :param data1:  Input data1 to the correlation. format must be nchw
+    :param data2:  Input data2 to the correlation. format must be nchw
+    :param kernel_size: (int (non-negative), optional, default=1) – kernel size for Correlation must be an odd number
+    :param max_displacement: (int (non-negative), optional, default=1) – Max displacement of Correlation
+    :param stride1: (int (non-negative), optional, default=1) – stride1 quantize data1 globally
+    :param stride2: (int (non-negative), optional, default=1) – stride2 quantize data2 within the neighborhood centered around data1
+    :param pad_size: (int (non-negative), optional, default=0) – pad for Correlation
+    :param is_multiply: (boolean, optional, default=True) – operation type is either multiplication or absolute difference 
+
+    """
+
+    op = builtin.Correlation(
+        format="NCHW",
+        kernel_size=kernel_size,
+        max_displacement=max_displacement,
+        stride1=stride1,
+        stride2=stride2,
+        pad_size=pad_size,
+        is_multiply=is_multiply,
+    )
+
+    result, *_ = apply(op, data1, data2)
     return result
 
 
@@ -151,6 +188,8 @@ def roi_align(
               [0.1359 0.1359]]]
 
     """
+    if inp.dtype != np.float32:
+        inp = inp.astype(np.float32)
     mode = mode.lower()
     assert mode in ["max", "average"], "only max/average mode is supported"
     if isinstance(output_shape, int):
@@ -171,7 +210,6 @@ def roi_align(
         sample_height=sample_height,
         sample_width=sample_width,
     )
-    inp, rois = utils.convert_inputs(inp, rois)
     result, *_ = apply(op, inp, rois)
     return result
 
@@ -187,7 +225,11 @@ def nms(
     :param scores: tensor of shape `(N,)`, the score of boxes.
     :param max_output: the maximum number of boxes to keep; it is optional if this operator is not traced
         otherwise it required to be specified; if it is not specified, all boxes are kept.
-    :return: indices of the elements that have been kept by NMS.
+    :return: indices of the elements that have been kept by NMS, sorted by scores.
+
+    .. note::
+
+        max_output should be specified and should have valid positive value under tracing
 
     Examples:
 
@@ -226,16 +268,11 @@ def nms(
     sorted_idx = argsort(scores, descending=True)
     boxes = boxes[sorted_idx]
 
-    if is_tracing():
-        assert (
-            max_output is not None and max_output > 0
-        ), "max_output should be specified under tracing"
-
     if max_output is None:
         max_output = boxes.shape[0]
 
     op = builtin.NMSKeep(iou_thresh, max_output)
-    inp = utils.convert_inputs(boxes.reshape(1, -1, 4))
+    inp = (boxes.reshape(1, -1, 4),)
     indices, count = apply(op, *inp)
     indices = indices[0][: count[0]]
     keep_inds = sorted_idx[indices]
@@ -300,18 +337,18 @@ def remap(
 
 def warp_affine(
     inp: Tensor,
-    weight: Tensor,
-    out_shape,
-    border_mode="replicate",
-    border_val=0,
-    format="NHWC",
-    imode="linear",
-):
+    mat: Tensor,
+    out_shape: Union[Tuple[int, int], int, Tensor],
+    border_mode: str = "replicate",
+    border_val: float = 0.0,
+    format: str = "NHWC",
+    interp_mode: str = "linear",
+) -> Tensor:
     """
     Batched affine transform on 2D images.
 
     :param inp: input image.
-    :param weight: weight tensor.
+    :param mat: `(batch, 2, 3)` transformation matrix.
     :param out_shape: output tensor shape.
     :param border_mode: pixel extrapolation method.
         Default: "wrap". Currently "constant", "reflect",
@@ -319,30 +356,35 @@ def warp_affine(
     :param border_val: value used in case of a constant border. Default: 0
     :param format: "NHWC" as default based on historical concerns,
         "NCHW" is also supported. Default: "NHWC".
-    :param imode: interpolation methods. Could be "linear", "nearest", "cubic", "area".
+    :param interp_mode: interpolation methods. Could be "linear", "nearest", "cubic", "area".
         Default: "linear".
     :return: output tensor.
 
     .. note::
 
-    Here all available options for params are listed,
-    however it does not mean that you can use all the combinations.
-    On different platforms, different combinations are supported.
+       Here all available options for params are listed,
+       however it does not mean that you can use all the combinations.
+       On different platforms, different combinations are supported.
     """
     op = builtin.WarpAffine(
-        border_mode=border_mode, border_val=border_val, format=format, imode=imode
+        border_mode=border_mode,
+        border_val=border_val,
+        format=format,
+        imode=interp_mode,
     )
     out_shape = utils.astensor1d(out_shape, inp, dtype="int32", device=inp.device)
-    (result,) = apply(op, inp, weight, out_shape)
+    (result,) = apply(op, inp, mat, out_shape)
     return result
 
 
 def warp_perspective(
     inp: Tensor,
-    M: Tensor,
-    dsize: Union[Tuple[int, int], int, Tensor],
+    mat: Tensor,
+    out_shape: Union[Tuple[int, int], int, Tensor],
+    mat_idx: Optional[Union[Iterable[int], Tensor]] = None,
     border_mode: str = "replicate",
     border_val: float = 0.0,
+    format: str = "NCHW",
     interp_mode: str = "linear",
 ) -> Tensor:
     r"""
@@ -356,20 +398,25 @@ def warp_perspective(
                 \frac{M_{10}h + M_{11}w + M_{12}}{M_{20}h + M_{21}w + M_{22}}
                 \right)
 
+    Optionally, we can set `mat_idx` to assign different transformations to the same image,
+    otherwise the input images and transformations should be one-to-one correnspondence.
+
     :param inp: input image.
-    :param M: `(batch, 3, 3)` transformation matrix.
-    :param dsize: `(h, w)` size of the output image.
+    :param mat: `(batch, 3, 3)` transformation matrix.
+    :param out_shape: `(h, w)` size of the output image.
+    :param mat_idx: `(batch, )` image batch idx assigned to each matrix. Default: None
     :param border_mode: pixel extrapolation method.
         Default: "replicate". Currently also support "constant", "reflect",
         "reflect_101", "wrap".
     :param border_val: value used in case of a constant border. Default: 0
+    :param format: "NHWC" is also supported. Default: "NCHW".
     :param interp_mode: interpolation methods.
         Default: "linear". Currently only support "linear" mode.
     :return: output tensor.
 
-    Note:
+    .. note::
 
-    The transformation matrix is the inverse of that used by `cv2.warpPerspective`.
+       The transformation matrix is the inverse of that used by `cv2.warpPerspective`.
 
     Examples:
 
@@ -397,12 +444,19 @@ def warp_perspective(
            [ 9. 10.]]]]
 
     """
+    if inp.dtype == np.float32:
+        mat = mat.astype("float32")
+    if inp.dtype == np.float16:
+        inp = inp.astype("float32")
     op = builtin.WarpPerspective(
-        imode=interp_mode, bmode=border_mode, format="NCHW", border_val=border_val
+        imode=interp_mode, bmode=border_mode, format=format, border_val=border_val
     )
-    inp, M = utils.convert_inputs(inp, M)
-    dsize = astensor1d(dsize, inp, dtype="int32", device=inp.device)
-    (result,) = apply(op, inp, M, dsize)
+    out_shape = astensor1d(out_shape, inp, dtype="int32", device=inp.device)
+    if mat_idx is not None:
+        mat_idx = astensor1d(mat_idx, inp, dtype="int32", device=inp.device)
+        (result,) = apply(op, inp, mat, mat_idx, out_shape)
+        return result
+    (result,) = apply(op, inp, mat, out_shape)
     return result
 
 
@@ -584,7 +638,8 @@ def nvof(src: Tensor, precision: int = 1) -> Tensor:
     :src shape: input tensor with shape (n, t, h, w, c4).
     :src dtype: uint8.
     :param precision: 0:NV_OF_PERF_LEVEL_SLOW 1:NV_OF_PERF_LEVEL_MEDIUM 2:NV_OF_PERF_LEVEL_FAST.
-    :output shape: (n, t-1, h//4, w//4, c2).
+    :output shape: ``(n, t-1, (h+out_grid_size-1)//out_grid_size, (w+out_grid_size-1)//out_grid_size, c2)``.
+        By default, out_grid_size = 4.
     :output dtype: int16.
 
     .. code-block:: python

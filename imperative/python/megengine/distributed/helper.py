@@ -15,15 +15,16 @@ from weakref import WeakSet
 import numpy as np
 
 from megengine.autodiff.grad_manager import GradManager, get_backwarding_grad_manager
-from megengine.device import get_default_device, get_device_count
 
 from ..core._imperative_rt.core2 import apply
 from ..core.ops.builtin import ParamPackConcat, ParamPackSplit
 from ..functional.tensor import copy
 from ..tensor import Tensor
+from ..utils.deprecation import deprecated_func
 from ..utils.future import Future
-from .functional import all_reduce_sum, broadcast
-from .group import WORLD, Group, group_barrier, is_distributed
+from . import group as _group
+from .functional import _bcast_param, all_reduce_sum, broadcast
+from .group import WORLD, Group, group_barrier, is_distributed, override_backend
 
 
 def param_pack_split(inp: Tensor, offsets: list, shapes: list):
@@ -118,10 +119,30 @@ def get_offsets(shapes):
     return offsets
 
 
+_enable_p2p_cache = None
+
+
+def _check_enable_p2p():
+    global _enable_p2p_cache
+    if _enable_p2p_cache is not None:
+        return _enable_p2p_cache
+    cmd = ["nvidia-smi", "topo", "-p2p", "w"]
+    import subprocess
+
+    output = subprocess.run(cmd, stdout=subprocess.PIPE).stdout
+    if output.count(b"OK") > 1:
+        _enable_p2p_cache = True
+        return True
+    else:
+        _enable_p2p_cache = False
+        return False
+
+
 def pack_allreduce_split(pack_list, shapes, group, reduce_method):
     offsets_val = get_offsets(shapes)
     offsets = Tensor(offsets_val)
     packed_grads = param_pack_concat(pack_list, offsets, offsets_val)
+
     packed_grads = all_reduce_sum(packed_grads, group, group.comp_node)
     if reduce_method == "mean":
         packed_grads /= group.size
@@ -160,22 +181,21 @@ def synchronized(func: Callable):
     return wrapper
 
 
-def _get_device_count_worker(queue, device_type):
-    num = get_device_count(device_type)
-    queue.put(num)
+def _check_device_initialized(device_type: str, rank: int):
+    try:
+        test = Tensor(1, device=(device_type + str(rank)))
+        inited = False
+        del test
+    except:
+        inited = True
+    errmsg = "The cuda env is set before the forked thread starts. Please do not use any cuda function or variable before forking."
+    if inited:
+        raise RuntimeError(errmsg)
 
 
-def get_device_count_by_fork(device_type: str):
-    """
-    Get device count in fork thread.
-    See https://stackoverflow.com/questions/22950047/cuda-initialization-error-after-fork
-    for more information.
-    """
-    q = mp.Queue()
-    p = mp.Process(target=_get_device_count_worker, args=(q, device_type))
-    p.start()
-    p.join()
-    return q.get()
+get_device_count_by_fork = deprecated_func(
+    "1.5", "megengine.device", "get_device_count", False
+)
 
 
 def bcast_list_(inps: list, group: Group = WORLD):
@@ -186,7 +206,7 @@ def bcast_list_(inps: list, group: Group = WORLD):
     :param group: communication group.
     """
     for inp in inps:
-        inp._reset(broadcast(inp, group))
+        inp._reset(_bcast_param(inp, group))
 
 
 class AllreduceCallback:
@@ -195,9 +215,10 @@ class AllreduceCallback:
 
     :param reduce_method: the method to reduce gradiants.
     :param group: communication group.
+    :param backend: override distributed backend in allreduce
     """
 
-    def __init__(self, reduce_method: str, group: Group = WORLD):
+    def __init__(self, reduce_method: str, group: Group = WORLD, backend: str = None):
         reduce_method = reduce_method.lower()
         assert reduce_method in ["sum", "mean"], "reduce_method should be sum or mean"
         self._reduce_method = reduce_method
@@ -205,6 +226,15 @@ class AllreduceCallback:
         self._marked_gm = WeakSet()
         self._param_pack_thd = 10 * 1024 * 1024
         self._reset()
+        if backend is None:
+            assert _group._sd, "please call init_process_group first"
+            backend = _group._sd.backend
+        if backend == "auto":
+            if group.is_single_machine and not _check_enable_p2p():
+                backend = "shm"
+            else:
+                backend = "nccl"
+        self._backend = backend
 
     def _reset(self):
         self._params = []
@@ -219,9 +249,10 @@ class AllreduceCallback:
             return
         grad_list = [self._gradients_dict[p] for p in self._packing_list[dtype]]
         shapes = [p._tuple_shape for p in self._packing_list[dtype]]
-        reduced_grads = pack_allreduce_split(
-            grad_list, shapes, self._group, self._reduce_method
-        )
+        with override_backend(self._backend):
+            reduced_grads = pack_allreduce_split(
+                grad_list, shapes, self._group, self._reduce_method
+            )
         for param, grad in zip(self._packing_list[dtype], reduced_grads):
             self._gradients_dict[param] = grad
         self._packing_list[dtype] = []

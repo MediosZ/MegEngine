@@ -7,7 +7,7 @@
 # software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
-from .activation import LeakyReLU, PReLU, ReLU, Sigmoid, Softmax
+from .activation import GELU, LeakyReLU, PReLU, ReLU, Sigmoid, SiLU, Softmax
 from .adaptive_pooling import AdaptiveAvgPool2d, AdaptiveMaxPool2d
 from .batch_matmul_activation import BatchMatMulActivation
 from .batchnorm import BatchNorm1d, BatchNorm2d, SyncBatchNorm
@@ -18,6 +18,7 @@ from .conv import (
     Conv3d,
     ConvRelu2d,
     ConvTranspose2d,
+    ConvTranspose3d,
     DeformableConv2d,
     LocalConv2d,
 )
@@ -33,3 +34,4 @@ from .normalization import GroupNorm, InstanceNorm, LayerNorm
 from .pooling import AvgPool2d, MaxPool2d
 from .quant_dequant import DequantStub, QuantStub
 from .sequential import Sequential
+from .sliding_window import SlidingWindow, SlidingWindowTranspose

@@ -1,4 +1,4 @@
-#!/bin/bash -ex
+#!/bin/bash -e
 
 function handle_strip() {
     echo "now handle strip $1"
@@ -62,10 +62,16 @@ function patch_elf_depend_lib_mgb_mge() {
 }
 
 
+SRC_DIR=$(readlink -f "`dirname $0`/../../../")
+source ${SRC_DIR}/scripts/whl/utils/utils.sh
+
+SUPPORT_ALL_VERSION="35m 36m 37m 38"
 ALL_PYTHON=${ALL_PYTHON}
 if [[ -z ${ALL_PYTHON} ]]
 then
-    ALL_PYTHON="35m 36m 37m 38"
+    ALL_PYTHON=${SUPPORT_ALL_VERSION}
+else
+    check_python_version_is_valid "${ALL_PYTHON}" "${SUPPORT_ALL_VERSION}"
 fi
 
 BUILD_WHL_CPU_ONLY=${BUILD_WHL_CPU_ONLY}
@@ -74,34 +80,64 @@ then
     BUILD_WHL_CPU_ONLY="OFF"
 fi
 
-SRC_DIR=$(readlink -f "`dirname $0`/../../../")
 BUILD_DIR=${SRC_DIR}/build_dir/host/MGE_WITH_CUDA_OFF/MGE_INFERENCE_ONLY_OFF/Release/build/
 if [ ${BUILD_WHL_CPU_ONLY} = "OFF" ]; then
     BUILD_DIR=${SRC_DIR}/build_dir/host/MGE_WITH_CUDA_ON/MGE_INFERENCE_ONLY_OFF/Release/build/
 fi
 
+# here we just treat cu file should not in the increment build file list
+INCREMENT_KEY_WORDS=".cu.o is dirty"
+IS_IN_FIRST_LOOP=TRUE
+
+ORG_EXTRA_CMAKE_FLAG=${EXTRA_CMAKE_FLAG}
 for ver in ${ALL_PYTHON}
 do
+    # we want run a full clean build at the first loop
+    if [ ${IS_IN_FIRST_LOOP} = "TRUE" ]; then
+        # TODO: may all cmake issue can be resolved after rm CMakeCache?
+        # if YES, remove this to use old cache and speed up CI
+        echo "warning: remove old build_dir for the first loop"
+        rm -rf ${BUILD_DIR}
+    fi
+
     python_ver=${ver:0:2}
     MAJOR=${python_ver:0:1}
     MINOR=${ver:1}
     PYTHON_DIR=/opt/python/cp${python_ver}-cp${ver}/
-    export EXTRA_CMAKE_ARGS="${EXTRA_CMAKE_ARGS} ${EXTRA_CMAKE_FLAG}"
-    export EXTRA_CMAKE_ARGS="${EXTRA_CMAKE_ARGS} -DCMAKE_BUILD_TYPE=RelWithDebInfo"
-    export EXTRA_CMAKE_ARGS="${EXTRA_CMAKE_ARGS} -DCMAKE_PREFIX_PATH=${PYTHON_DIR}"
+    export EXTRA_CMAKE_ARGS="${ORG_EXTRA_CMAKE_FLAG} -DCMAKE_BUILD_TYPE=RelWithDebInfo"
     export EXTRA_CMAKE_ARGS="${EXTRA_CMAKE_ARGS} -DPYTHON_EXECUTABLE=${PYTHON_DIR}/bin/python3"
     export EXTRA_CMAKE_ARGS="${EXTRA_CMAKE_ARGS} -DPYTHON_LIBRARY=${PYTHON_DIR}lib/"
     export EXTRA_CMAKE_ARGS="${EXTRA_CMAKE_ARGS} -DPYTHON_INCLUDE_DIR=${PYTHON_DIR}include/python${MAJOR}.${MINOR}"
     export EXTRA_CMAKE_ARGS="${EXTRA_CMAKE_ARGS} -DMGE_WITH_ATLAS=ON"
 
-    # TODO: after change to Ninja, only the fisrt loop need add -r to save build time
-    if [ ${BUILD_WHL_CPU_ONLY} = "OFF" ]; then
-        ${SRC_DIR}/scripts/cmake-build/host_build.sh -c -t -r
-    else
-        ${SRC_DIR}/scripts/cmake-build/host_build.sh -t -r
+    if [ -d "${BUILD_DIR}" ]; then
+        # insure rm have args
+        touch ${BUILD_DIR}/empty.so
+        touch ${BUILD_DIR}/CMakeCache.txt
+        find ${BUILD_DIR} -name "*.so" | xargs rm
+        # as we now use increment build mode when switch python
+        # But I do not known any more issue at CMakeLists.txt or not
+        # so Force remove CMakeCache.txt
+        find ${BUILD_DIR} -name CMakeCache.txt | xargs rm
     fi
 
+    HOST_BUILD_ARGS="-t -s"
+    if [ ${BUILD_WHL_CPU_ONLY} = "OFF" ]; then
+        HOST_BUILD_ARGS="${HOST_BUILD_ARGS} -c"
+    fi
+
+    # call ninja dry run and check increment is invalid or not
+    if [ ${IS_IN_FIRST_LOOP} = "FALSE" ]; then
+        ninja_dry_run_and_check_increment "${SRC_DIR}/scripts/cmake-build/host_build.sh" "${HOST_BUILD_ARGS}" "${INCREMENT_KEY_WORDS}"
+    fi
+
+    # call real build
+    echo "host_build.sh HOST_BUILD_ARGS: ${HOST_BUILD_ARGS}"
+    ${SRC_DIR}/scripts/cmake-build/host_build.sh ${HOST_BUILD_ARGS}
+
+    # check python api call setup.py
     cd ${BUILD_DIR}
+    check_build_ninja_python_api ${ver}
     rm -rf staging
     mkdir -p staging
     cp -a imperative/python/{megengine,setup.py,requires.txt,requires-style.txt,requires-test.txt} staging/
@@ -128,4 +164,5 @@ do
     # compat for root-less docker env to remove output at host side
     chmod -R 777 .
     echo "python $ver done"
+    IS_IN_FIRST_LOOP=FALSE
 done

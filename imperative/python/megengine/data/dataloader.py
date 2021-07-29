@@ -7,6 +7,7 @@
 # software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 import collections
+import gc
 import math
 import multiprocessing
 import platform
@@ -42,8 +43,29 @@ def raise_timeout_error():
 
 
 class DataLoader:
-    r"""
-    Provides a convenient way to iterate on a given dataset.
+    r"""Provides a convenient way to iterate on a given dataset.
+
+    DataLoader combines a dataset with
+    :class:`~.Sampler`, :class:`~.Transform` and :class:`~.Collator`,
+    make it flexible to get minibatch continually from a dataset.
+
+    :param dataset: dataset from which to load the minibatch.
+    :param sampler: defines the strategy to sample data from the dataset.
+    :param transform: defined the transforming strategy for a sampled batch.
+        Default: None
+    :param collator: defined the merging strategy for a transformed batch.
+        Default: None
+    :param num_workers: the number of sub-process to load, transform and collate
+        the batch. ``0`` means using single-process. Default: 0
+    :param timeout: if positive, means the timeout value(second) for collecting a
+        batch from workers. Default: 0
+    :param timeout_event: callback function triggered by timeout, default to raise
+        runtime error.
+    :param divide: define the paralleling strategy in multi-processing mode.
+        ``True`` means one batch is divided into :attr:`num_workers` pieces, and
+        the workers will process these pieces parallelly. ``False`` means
+        different sub-process will process different batch. Default: False
+
     """
     __initialized = False
 
@@ -58,36 +80,6 @@ class DataLoader:
         timeout_event: Callable = raise_timeout_error,
         divide: bool = False,
     ):
-        r"""
-        `DataLoader` combines a dataset with `sampler`, `transform` and `collator`,
-        make it flexible to get minibatch continually from a dataset.
-
-        :type dataset: Dataset
-        :param dataset: dataset from which to load the minibatch.
-        :type sampler: Sampler
-        :param sampler: defines the strategy to sample data from the dataset.
-        :type transform: Transform
-        :param transform: defined the transforming strategy for a sampled batch.
-            Default: None
-        :type collator: Collator
-        :param collator: defined the merging strategy for a transformed batch.
-            Default: None
-        :type num_workers: int
-        :param num_workers: the number of sub-process to load, transform and collate
-            the batch. ``0`` means using single-process. Default: 0
-        :type timeout: int
-        :param timeout: if positive, means the timeout value(second) for collecting a
-            batch from workers. Default: 0
-        :type timeout_event: Callable
-        :param timeout_event: callback function triggered by timeout, default to raise
-            runtime error.
-        :type divide: bool
-        :param divide: define the paralleling strategy in multi-processing mode.
-            ``True`` means one batch is divided into :attr:`num_workers` pieces, and
-            the workers will process these pieces parallelly. ``False`` means
-            different sub-process will process different batch. Default: False
-
-        """
         if num_workers < 0:
             raise ValueError("num_workers should not be negative")
 
@@ -246,6 +238,7 @@ class _ParallelMapDataLoaderIter(_BaseMapDataLoaderIter):
             ),
             daemon=True,
         )
+        gc.collect()
         self.task_feeding_worker.start()
 
         self.workers = []
@@ -262,6 +255,7 @@ class _ParallelMapDataLoaderIter(_BaseMapDataLoaderIter):
                 ),
                 daemon=True,
             )
+            gc.collect()
             worker.start()
             self.workers.append(worker)
 
@@ -293,6 +287,7 @@ class _ParallelMapDataLoaderIter(_BaseMapDataLoaderIter):
                 ),
                 daemon=True,
             )
+        gc.collect()
         self.data_collecting_worker.start()
 
         self.__initialized = True
@@ -300,7 +295,7 @@ class _ParallelMapDataLoaderIter(_BaseMapDataLoaderIter):
     def _check_workers(self):
         # Check the status of each worker.
         if not self.data_collecting_worker.is_alive():
-            exitcode = self.task_feeding_worker.exitcode
+            exitcode = self.data_collecting_worker.exitcode
             if exitcode != 0:
                 raise RuntimeError("data collecting worker died. {}".format(exitcode))
 
@@ -465,6 +460,7 @@ class _ParallelStreamDataLoaderIter(_BaseStreamDataLoaderIter):
         self.recieve_worker = multiprocessing.Process(
             target=self._worker_to_raw_data_queues, daemon=True
         )
+        gc.collect()
         self.recieve_worker.start()
 
         self.transform_workers = []
@@ -472,12 +468,14 @@ class _ParallelStreamDataLoaderIter(_BaseStreamDataLoaderIter):
             worker = multiprocessing.Process(
                 target=self._worker_to_trans_data_queues, args=(worker_id,), daemon=True
             )
+            gc.collect()
             worker.start()
             self.transform_workers.append(worker)
 
         self.collect_worker = multiprocessing.Process(
             target=self._worker_to_batch_queue, daemon=True
         )
+        gc.collect()
         self.collect_worker.start()
 
         self.__initialized = True

@@ -30,7 +30,6 @@
 #include <random>
 
 using namespace mgb;
-
 namespace {
 
 using Param = opr::Convolution::Param;
@@ -354,31 +353,26 @@ TEST(TestOprDNN, ConvBiasExePolicy) {
 
     auto cn = CompNode::load("cpux");
 
-#if MGB_ENABLE_FASTRUN
-    for (auto strategy :
-         SmallVector<S>{S::PROFILE, S::HEURISTIC, S::PROFILE | S::REPRODUCIBLE,
-          S::PROFILE | S::HEURISTIC, S::PROFILE | S::OPTIMIZED}) {
-#else
-    for (auto strategy :
-         SmallVector<S>{S : HEURISTIC, S::PROFILE | S::HEURISTIC}) {
-#endif
+    auto orig_impl = PersistentCache::set_impl(
+            std::make_shared<InMemoryPersistentCache>());
+
+    auto run = [&](S strategy) {
         auto graph = ComputingGraph::make();
         HostTensorGenerator<> gen;
 
         auto mkvar = [&](const char* name, const TensorShape& shp,
                          const DType& dtype) {
             return opr::TypeCvt::make(
-                    opr::Host2DeviceCopy::make(*graph, gen(shp), cn).rename(name),
+                    opr::Host2DeviceCopy::make(*graph, gen(shp), cn)
+                            .rename(name),
                     dtype);
         };
 
         auto x = mkvar("x", {20, 50, 50, 16}, dtype::QuantizedS8(2.5f));
         auto w = mkvar("w", {24, 3, 3, 16}, dtype::QuantizedS8(2.5f));
         auto bias = mkvar("bias", {1, 1, 1, 24}, dtype::QuantizedS32(6.25f));
-
         param.nonlineMode = Param::NonlineMode::RELU;
         param.format = Param::Format::NHWC;
-
         Policy policy;
         policy.strategy = strategy;
 
@@ -388,7 +382,22 @@ TEST(TestOprDNN, ConvBiasExePolicy) {
         HostTensorND host_y;
         auto func = graph->compile({make_callback_copy(conv_bias, host_y)});
         func->execute();
+        //! set a new cache
+        PersistentCache::set_impl(std::make_shared<InMemoryPersistentCache>());
+    };
+
+#if MGB_ENABLE_FASTRUN
+    for (auto strategy :
+         SmallVector<S>{S::PROFILE, S::HEURISTIC, S::PROFILE | S::REPRODUCIBLE,
+                        S::PROFILE | S::HEURISTIC}) {
+#else
+    for (auto strategy :
+         SmallVector<S>{S : HEURISTIC, S::PROFILE | S::HEURISTIC}) {
+#endif
+        run(strategy);
     }
+    ASSERT_THROW(run(S::OPTIMIZED | S::PROFILE), MegBrainError);
+    PersistentCache::set_impl(orig_impl);
 }
 
 TEST(TestOprDNN, ConvBiasExePolicy_Quantized8Asym) {
@@ -401,19 +410,21 @@ TEST(TestOprDNN, ConvBiasExePolicy_Quantized8Asym) {
 
     for (auto strategy :
          SmallVector<S>{S::PROFILE, S::PROFILE | S::REPRODUCIBLE}) {
-
         auto graph = ComputingGraph::make();
         HostTensorGenerator<> gen;
 
         auto mkvar = [&](const char* name, const TensorShape& shp,
                          const DType& dtype) {
             return opr::TypeCvt::make(
-                    opr::Host2DeviceCopy::make(*graph, gen(shp), cn).rename(name),
+                    opr::Host2DeviceCopy::make(*graph, gen(shp), cn)
+                            .rename(name),
                     dtype);
         };
 
-        auto x = mkvar("x", {20, 50, 50, 16}, dtype::Quantized8Asymm(2.5f, static_cast<uint8_t>(0)));
-        auto w = mkvar("w", {24, 3, 3, 16}, dtype::Quantized8Asymm(2.5f, static_cast<uint8_t>(0)));
+        auto x = mkvar("x", {20, 50, 50, 16},
+                       dtype::Quantized8Asymm(2.5f, static_cast<uint8_t>(0)));
+        auto w = mkvar("w", {24, 3, 3, 16},
+                       dtype::Quantized8Asymm(2.5f, static_cast<uint8_t>(0)));
         auto bias = mkvar("bias", {1, 1, 1, 24}, dtype::QuantizedS32(6.25f));
 
         param.nonlineMode = Param::NonlineMode::RELU;
@@ -444,7 +455,7 @@ TEST(TestOprDNN, ConvolutionExePolicy) {
 #if MGB_ENABLE_FASTRUN
     for (auto strategy :
          SmallVector<S>{S::PROFILE, S::HEURISTIC, S::PROFILE | S::REPRODUCIBLE,
-          S::PROFILE | S::HEURISTIC, S::PROFILE | S::OPTIMIZED}) {
+                        S::PROFILE | S::HEURISTIC}) {
 #else
     for (auto strategy :
          SmallVector<S>{S : HEURISTIC, S::PROFILE | S::HEURISTIC}) {
@@ -2591,5 +2602,160 @@ TEST_F(TestNoWeightPreprocess, NoPreprocess) {
 }  // anonymous namespace
 
 #endif
+
+namespace {
+
+TEST(TestOprDNN, ConvBiasInt4Serialize) {
+    using namespace serialization;
+
+    float inp_scale = 1.20210327f;
+    float filt_scale = 1.20210406f;
+    float bias_scale = inp_scale * filt_scale;
+    DType output_dtype = dtype::QuantizedS4{inp_scale};
+
+    HostTensorGenerator<dtype::Int8> gen;
+    std::shared_ptr<HostTensorND> xv;
+    auto mkvar = [](const char* name, const DType& dtype,
+                        std::shared_ptr<ComputingGraph> graph,
+                        std::shared_ptr<HostTensorND> val) {
+        return opr::TypeCvt::make(
+                opr::Host2DeviceCopy::make(*graph, val).rename(name), dtype);
+    };
+    auto mkcvar =
+            [&gen](const char* name, const TensorShape& shp, const DType& dtype,
+                   std::shared_ptr<ComputingGraph> graph, const CompNode& cn) {
+                return opr::TypeCvt::make(
+                        opr::SharedDeviceTensor::make(*graph, *gen(shp, cn))
+                                .rename(name),
+                        dtype);
+            };
+
+    auto fname = output_file("ConvBiasInt4Serialize");
+    HostTensorND y1, y2;
+    auto dump = [&]() {
+        opr::ConvBias::Param param;
+        param.mode = Mode::CONVOLUTION;
+
+        auto cn = CompNode::load("cpu0");
+        auto graph = ComputingGraph::make();
+        xv = gen({1, 64, 56, 56}, cn);
+        auto x = mkvar("x", dtype::QuantizedS4{inp_scale}, graph, xv);
+        auto w = mkcvar("w", {256, 64, 1, 1}, dtype::QuantizedS4{filt_scale}, graph, cn);
+        auto b = mkcvar("b", {1, 256, 1, 1}, dtype::QuantizedS32{bias_scale}, graph, cn);
+        auto y = opr::ConvBiasForward::make(x, w, b, param, {},
+                                            OperatorNodeConfig{output_dtype});
+        auto w1 = mkcvar("w1", {64, 256, 1, 1}, dtype::QuantizedS4{filt_scale},
+                         graph, cn);
+        auto b1 = mkcvar("b1", {1, 64, 1, 1}, dtype::QuantizedS32{bias_scale},
+                         graph, cn);
+        y = opr::ConvBiasForward::make(y, w1, b1, param, {},
+                                       OperatorNodeConfig{output_dtype});
+        y = opr::TypeCvt::make(y, dtype::Float32());
+        auto dumper = GraphDumper::make(OutputFile::make_fs(fname.c_str()));
+        auto func = graph->compile({make_callback_copy(y, y1)});
+        func->execute();
+        func->wait();
+        auto rst = dumper->dump({y});
+        ASSERT_EQ(rst.outputs.size(), 1u);
+    };
+
+    auto load = [&]() {
+        auto loader = GraphLoader::make(InputFile::make_fs(fname.c_str()));
+        auto rst = loader->load();
+        for (const auto& t : rst.tensor_map) {
+            t.second->copy_from(*xv).sync();
+        }
+        auto func = rst.graph->compile(
+                {make_callback_copy(rst.output_var_list[0], y2)});
+        func->execute();
+        func->wait();
+        ASSERT_EQ(rst.output_var_list.size(), 1u);
+        EXPECT_EQ(rst.output_var_list[0].dtype(), dtype::Float32());
+    };
+
+    dump();
+    load();
+    MGB_ASSERT_TENSOR_NEAR(y1, y2, 1e-3);
+}
+
+TEST(TestOprDNN, ConvBiasInt4SerializeWithParamFuse) {
+    using namespace serialization;
+
+    float inp_scale = 1.20210327f;
+    float filt_scale = 1.20210406f;
+    float bias_scale = inp_scale * filt_scale;
+    DType output_dtype = dtype::QuantizedS4{inp_scale};
+
+    HostTensorGenerator<dtype::Int8> gen;
+    std::shared_ptr<HostTensorND> xv;
+    auto mkvar = [](const char* name, const DType& dtype,
+                    std::shared_ptr<ComputingGraph> graph,
+                    std::shared_ptr<HostTensorND> val) {
+        return opr::TypeCvt::make(
+                opr::Host2DeviceCopy::make(*graph, val).rename(name), dtype);
+    };
+    auto mkcvar =
+            [&gen](const char* name, const TensorShape& shp, const DType& dtype,
+                   std::shared_ptr<ComputingGraph> graph, const CompNode& cn) {
+                return opr::TypeCvt::make(
+                        opr::SharedDeviceTensor::make(*graph, *gen(shp, cn))
+                                .rename(name),
+                        dtype);
+            };
+
+    auto fname = output_file("ConvBiasInt4SerializeWithParamFuse");
+    HostTensorND y1, y2;
+    auto dump = [&]() {
+        opr::ConvBias::Param param;
+        param.mode = Mode::CONVOLUTION;
+
+        auto cn = CompNode::load("cpu0");
+        auto graph = ComputingGraph::make();
+        xv = gen({1, 64, 56, 56}, cn);
+        auto x = mkvar("x", dtype::QuantizedS4{inp_scale}, graph, xv);
+        auto w = mkcvar("w", {256, 64, 1, 1}, dtype::QuantizedS4{filt_scale}, graph, cn);
+        auto b = mkcvar("b", {1, 256, 1, 1}, dtype::QuantizedS32{bias_scale}, graph, cn);
+        auto y = opr::ConvBiasForward::make(x, w, b, param, {},
+                                            OperatorNodeConfig{output_dtype});
+        auto w1 = mkcvar("w1", {64, 256, 1, 1}, dtype::QuantizedS4{filt_scale},
+                         graph, cn);
+        auto b1 = mkcvar("b1", {1, 64, 1, 1}, dtype::QuantizedS32{bias_scale},
+                         graph, cn);
+        y = opr::ConvBiasForward::make(y, w1, b1, param, {},
+                                       OperatorNodeConfig{output_dtype});
+        y = opr::TypeCvt::make(y, dtype::Float32());
+        SymbolVar y_param_fused;
+        unpack_vector(gopt::GraphOptimizer{}
+                              .add_pass<gopt::ParamFusePass>()
+                              .apply({{y}})
+                              .endpoint_vars(),
+                      y_param_fused);
+        auto dumper = GraphDumper::make(OutputFile::make_fs(fname.c_str()));
+        auto func = graph->compile({make_callback_copy(y_param_fused, y1)});
+        func->execute();
+        func->wait();
+        auto rst = dumper->dump({y_param_fused});
+        ASSERT_EQ(rst.outputs.size(), 1u);
+    };
+
+    auto load = [&]() {
+        auto loader = GraphLoader::make(InputFile::make_fs(fname.c_str()));
+        auto rst = loader->load();
+        for (const auto& t : rst.tensor_map) {
+            t.second->copy_from(*xv).sync();
+        }
+        auto func = rst.graph->compile(
+                {make_callback_copy(rst.output_var_list[0], y2)});
+        func->execute();
+        func->wait();
+        ASSERT_EQ(rst.output_var_list.size(), 1u);
+        EXPECT_EQ(rst.output_var_list[0].dtype(), dtype::Float32());
+    };
+
+    dump();
+    load();
+    MGB_ASSERT_TENSOR_NEAR(y1, y2, 1e-3);
+}
+}  // namespace
 
 // vim: syntax=cpp.doxygen foldmethod=marker foldmarker=f{{{,f}}}

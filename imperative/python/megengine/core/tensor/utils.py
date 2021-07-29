@@ -13,9 +13,10 @@ import numpy as np
 
 from .._imperative_rt import make_const
 from .._imperative_rt.core2 import SymbolVar, Tensor, apply, dtype_promotion, get_device
-from .._wrap import device as as_device
+from .._wrap import as_device
 from ..ops import builtin
 from ..ops.special import Const
+from .amp import _high_prec_dtype, _low_prec_dtype
 from .dtype import is_dtype_equal, is_quantize
 
 _enable_convert_inputs = True
@@ -98,6 +99,14 @@ def convert_inputs(*args, device=None):
     return tuple(map(convert, args))
 
 
+def cast_tensors(*args, promote=False):
+    if promote:
+        dtype = _high_prec_dtype
+    else:
+        dtype = _low_prec_dtype
+    return tuple(arg.astype(dtype) if arg is not None else None for arg in args)
+
+
 def result_type(*args):
     dtypes = []
     for i in args:
@@ -137,10 +146,17 @@ def astensor1d(x, *reference, dtype=None, device=None):
         ndim = x.ndim
     except AttributeError:
         pass
+    except ValueError:
+        if dtype is not None and dtype != x.dtype:
+            x = astype(x, dtype)
+        if device is not None:
+            cn = as_device(device).to_c()
+            (x,) = apply(builtin.Copy(comp_node=cn), x)
+        return x
     else:
         if ndim != 0 and ndim != 1:
             raise ValueError("ndim != 1 or 0, get : %d" % ndim)
-        if not isinstance(x, Tensor):
+        if not isinstance(x, (Tensor, SymbolVar)):
             (x,) = Const(x, dtype=dtype, device=device)(*reference)
         return x
 
@@ -148,7 +164,7 @@ def astensor1d(x, *reference, dtype=None, device=None):
         raise TypeError
 
     if any(isinstance(i, (Tensor, SymbolVar)) for i in x):
-        x = concatenate(x, device=device)
+        x = concatenate(x, device=device) if len(x) > 1 else x[0]
         if dtype is not None:
             x = astype(x, dtype)
         return x
@@ -178,3 +194,28 @@ def make_shape_tuple(shape):
     s = []
     _expand_int(s, shape)
     return tuple(s)
+
+
+def _normalize_axis(
+    ndim: int, axis: Union[int, Iterable], reverse=False
+) -> Union[int, list]:
+    def convert(x):
+        x_org = x
+        if x < 0:
+            x = ndim + x
+        assert (
+            x >= 0 and x < ndim
+        ), "axis {} is out of bounds for tensor of dimension {}".format(x_org, ndim)
+        return x
+
+    if isinstance(axis, int):
+        return convert(axis)
+    elif isinstance(axis, Iterable):
+        axis_org = axis
+        axis = list(sorted(map(convert, axis), reverse=reverse))
+        for i in range(len(axis) - 1):
+            assert axis[i] != axis[i + 1], "axis {} contains duplicated indices".format(
+                axis_org
+            )
+        return axis
+    raise

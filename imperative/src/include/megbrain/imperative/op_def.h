@@ -26,10 +26,60 @@ enum DispatchMode {
     KERNEL = 1
 };
 
+using SharedOp = std::shared_ptr<OpDef>;
+
+template <typename T>
+struct Expr {
+    std::shared_ptr<OpDef> op;
+    SmallVector<T> inputs;
+    SmallVector<T> outputs;
+};
+
+struct Subgraph {
+    SmallVector<size_t> inputs;
+    SmallVector<std::pair<size_t, TensorPtr>> constants;
+    SmallVector<size_t> outputs;
+    SmallVector<Expr<size_t>> exprs;
+
+    template <typename T, typename F, typename C>
+    SmallVector<T> apply(SmallVector<T> input_vars, F&& f, C&& c) const {
+        std::unordered_map<size_t, T> idx2var;
+        mgb_assert(inputs.size() == input_vars.size(), "input size mismatch");
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            idx2var[inputs[i]] = input_vars[i];
+        }
+        for (auto&& [idx, val]: constants) {
+            idx2var[idx] = c(val);
+        }
+        for (auto& expr: exprs) {
+            SmallVector<T> expr_inputs;
+            for (auto idx: expr.inputs) {
+                expr_inputs.push_back(idx2var[idx]);
+            }
+            SmallVector<T> expr_outputs = f(expr.op, std::move(expr_inputs));
+            mgb_assert(expr_outputs.size() == expr.outputs.size(), "output size mismatch");
+            for (size_t i = 0; i < expr_outputs.size(); ++i) {
+                idx2var[expr.outputs[i]] = expr_outputs[i];
+            }
+        }
+        SmallVector<T> output_vars;
+        for (auto idx: outputs) {
+            output_vars.push_back(idx2var[idx]);
+        }
+        return output_vars;
+    }
+
+    bool empty() const {
+        return outputs.size() == 0;
+    }
+
+    std::string repr() const;
+};
+
 struct BackwardGraphResult {
-    std::shared_ptr<OpDef> backward;
-    std::vector<bool> save_for_backward;
-    std::vector<bool> input_has_grad;
+    Subgraph backward;
+    SmallVector<bool> save_for_backward;
+    SmallVector<bool> input_has_grad;
 };
 
 class OpDef : public Hashable,
@@ -58,6 +108,13 @@ public:
     static SmallVector<TensorPtr> apply_on_physical_tensor(
         const OpDef& def,
         SmallVector<TensorPtr> inputs);
+    
+    static void execute(
+        const OpDef& def,
+        SmallVector<TensorPtr> inputs,
+        SmallVector<TensorPtr> outputs,
+        SmallVector<TensorPtr> workspace);
+
 
     /*!
      * \brief Call the corresponding dnn op to calculate results. Output
@@ -75,6 +132,11 @@ public:
     static std::tuple<SmallVector<LogicalTensorDesc>, bool> infer_output_attrs_fallible(
         const OpDef& def,
         const SmallVector<LogicalTensorDesc>& inputs);
+
+    static std::tuple<SmallVector<MemoryDesc>, SmallVector<MemoryDesc>> infer_output_mem_desc(
+        const OpDef& def,
+        const SmallVector<TensorPtr>& inputs_tensors,
+        const SmallVector<MemoryDesc>& inputs_mems);
 
     static BackwardGraphResult make_backward_graph(
         const OpDef& def,

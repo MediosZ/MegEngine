@@ -251,6 +251,39 @@ void RelayoutFormat::deduce_layout_fwd(const TensorLayout& src,
             dst[3] = src[3];
             megdnn_assert(dst[1] % param().group == 0);
             break;
+        case Param::Mode::NCHW_NCHW64:
+            megdnn_assert(src.ndim == 4);
+            dst.ndim = 5;
+            dst[0] = src[0];
+            dst[1] = div_ceil(src[1], 64_z);
+            dst[2] = src[2];
+            dst[3] = src[3];
+            dst[4] = 64;
+            break;
+        case Param::Mode::NCHW64_NCHW:
+            megdnn_assert(src.ndim == 5);
+            dst.ndim = 4;
+            dst[0] = src[0];
+            dst[1] = param().oc == 0 ? src[1] * 64 : param().oc;
+            dst[2] = src[2];
+            dst[3] = src[3];
+            break;
+        case Param::Mode::NCHW_NHWC:
+            megdnn_assert(src.ndim == 4);
+            dst.ndim = 4;
+            dst[0] = src[0];
+            dst[1] = src[2];
+            dst[2] = src[3];
+            dst[3] = src[1];
+            break;
+        case Param::Mode::NHWC_NCHW:
+            megdnn_assert(src.ndim == 4);
+            dst.ndim = 4;
+            dst[0] = src[0];
+            dst[1] = src[3];
+            dst[2] = src[1];
+            dst[3] = src[2];
+            break;
         default:
             megdnn_assert(0, "Invalid RelayoutFormat Mode");
             break;
@@ -352,27 +385,28 @@ void RelayoutFormat::deduce_format(TensorFormat src, TensorFormat& dst) {
             CHECK_SRC(DefaultTensorFormat::make());
             dst = src;
             break;
-
+        case Param::Mode::NCHW_NCHW64:
+            dst = src;
+            break;
+        case Param::Mode::NCHW64_NCHW:
+            dst = src;
+            break;
+        case Param::Mode::NCHW_NHWC:
+        case Param::Mode::NHWC_NCHW:
+            dst = src;
+            break;
         default:
             megdnn_throw("Invalid relayout format mode");
             break;
     }
 
-    if (!dst.is_default() &&
+    if (dst.type() == TensorFormat::Type::IMAGE2D_PACK4 &&
         (
-                handle()->type() != Handle::HandleType::NAIVE)) {
-#if MEGDNN_ENABLE_MANGLING
-        megdnn_throw(
-                "Only naive and opencl handle support "
-                "Image2DPack4TensorFormat, try build with debug for get more "
-                "info");
-#else
-        megdnn_throw(
-                "Only naive and opencl handle support "
-                "Image2DPack4TensorFormat, try to export MGB_USE_MEGDNN_DBG=2 "
-                "and also export CUDA_VISIBLE_DEVICES=\'\' at CUDA env"
-                "to enable naive handle");
-#endif
+            handle()->type() != Handle::HandleType::NAIVE && 
+            handle()->type() != Handle::HandleType::X86)) {
+            megdnn_throw(
+                    "Dump with Image2DPack4TensorFormat is not available on CUDA compnode, "
+                    "try export CUDA_VISIBLE_DEVICES=\'\'");
     }
 #undef CHECK_SRC
 }
@@ -461,12 +495,11 @@ void RelayoutFormat::deduce_exec_layout(const TensorLayout& src,
         case Param::Mode::NCHW4_NCHW:
             // nchw to nchw4
             {
+                megdnn_assert(src.format == dst.format);
                 exec_workspace =
                         TensorLayout({src[0], src[1] * 4, src[2], src[3]},
-                                     src.dtype, src.format)
-                                .reshape({src[0], src[1], 4, src[2], src[3]})
-                                .dimshuffle({0, 1, 3, 4, 2});
-                exec_src = src;
+                                     dst.dtype, dst.format);
+                exec_src = src.dimshuffle({0, 1, 4, 2, 3});
                 exec_dst = dst;
             }
             break;
@@ -631,6 +664,34 @@ void RelayoutFormat::deduce_exec_layout(const TensorLayout& src,
             // src is {C/4, H, W, N, 4}
             // dst is {N, C/4, H, W, 4}
             exec_src = src.dimshuffle({3, 0, 1, 2, 4});
+            exec_dst = dst;
+            break;
+        case Param::Mode::NCHW_NCHW64:
+            // src is {N, C, H, W}
+            // dst is {N, C/64, H, W, 64}
+            exec_workspace = TensorLayout(
+                    {src[0], round_up(src[1], 64_z), src[2], src[3]},
+                    src.dtype);
+            exec_src = exec_workspace
+                               .reshape({src[0], div_ceil(src[1], 64_z), 64,
+                                         src[2], src[3]})
+                               .dimshuffle({0, 1, 3, 4, 2});
+            exec_dst = dst;
+            break;
+        case Param::Mode::NCHW64_NCHW:
+            // src is {N, C/64, H, W, 64}
+            // dst is {N, C, H, W}
+            exec_workspace = TensorLayout({src[0], src[1] * 64, src[2], src[3]},
+                                          dst.dtype);
+            exec_src = src.dimshuffle({0, 1, 4, 2, 3});
+            exec_dst = dst;
+            break;
+        case Param::Mode::NCHW_NHWC:
+            exec_src = src.dimshuffle({0, 2, 3, 1});
+            exec_dst = dst;
+            break;
+        case Param::Mode::NHWC_NCHW:
+            exec_src = src.dimshuffle({0, 3, 1, 2});
             exec_dst = dst;
             break;
         default:

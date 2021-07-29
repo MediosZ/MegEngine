@@ -10,6 +10,7 @@
  */
 
 #include "megbrain/opr/io.h"
+#include "megbrain/opr/basic_arith.h"
 #include "megbrain/opr/basic_arith_wrapper.h"
 #include "megbrain/opr/dnn/convolution.h"
 #include "megbrain/opr/utility.h"
@@ -25,6 +26,7 @@
 #include "megbrain/utils/timer.h"
 #include "megbrain/comp_node_env.h"
 #include "megbrain/gopt/inference.h"
+#include "megbrain/plugin/profiler.h"
 
 #include "megbrain/test/helper.h"
 #include "megdnn/oprs/base.h"
@@ -1993,6 +1995,12 @@ typename megdnn::ExecutionPolicy try_find_any_bias_preprocess_algo(
 void test_free_memory_in_weight_preprocess(int record_level, CompNode cn) {
     HostTensorGenerator<> gen;
     auto graph = ComputingGraph::make();
+#if MGB_ENABLE_JSON
+    std::unique_ptr<GraphProfiler> profiler;
+    if(!record_level){
+        profiler = std::make_unique<GraphProfiler>(graph.get());
+    }
+#endif
     graph->options().graph_opt.weight_preprocess = true;
     graph->options().comp_node_seq_record_level = record_level;
     auto mkvar = [&](const char* name, const TensorShape& shp) {
@@ -2055,6 +2063,13 @@ void test_free_memory_in_weight_preprocess(int record_level, CompNode cn) {
     if (wp2.val()) {
         check(w2);
     }
+#if MGB_ENABLE_JSON
+    if (profiler) {
+        func->wait();
+        profiler->to_json_full(func.get())
+                ->writeto_fpath(output_file("weight_preprocess.json"));
+    }
+#endif
 }
 } // anonymous namespace
 
@@ -2320,6 +2335,97 @@ TEST(TestGraph, DynamicOutput) {
     MGB_ASSERT_TENSOR_NEAR(expect_sum, result_sum, 1e-4);
     result_spl_0_0.copy_from(dest_vars[1]->dev_tensor()).sync();
     MGB_ASSERT_TENSOR_NEAR(expect_spl_0_0, result_spl_0_0, 1e-4);
+}
+
+namespace {
+// used for test reset_dev_tensor_from_tensor
+MGB_DEFINE_OPR_CLASS(MaybeEmptyTensorOpr, cg::SingleCNOperatorNodeBase)// {
+    DeviceTensorND m_dv;
+
+    void init_output_comp_node() override {
+        output(0)->comp_node(m_dv.comp_node());
+        comp_node(m_dv.comp_node());
+    }
+
+    void scn_do_execute() override {
+        output(0)->reset_dev_tensor_from_tensor(m_dv);
+    }
+
+    void init_output_static_infer_desc() override {
+        using namespace cg::static_infer;
+        auto &&mgr = owner_graph()->static_infer_manager();
+        mgr.register_shape_infer(output(0),
+                ShapeInferDesc::make_const(m_dv.shape()));
+    }
+
+    public:
+        MaybeEmptyTensorOpr(ComputingGraph &graph,
+                const DeviceTensorND &dv, const OperatorNodeConfig &config):
+            Super(&graph, config, "", {}), m_dv{dv} {
+            add_output(None)
+                ->add_flag(cg::VarNode::Flag::NO_SYS_MEM_ALLOC)
+                .add_flag(VarNode::Flag::ALLOW_EMPTY_SHAPE)
+                .dtype(dv.dtype());
+        }
+
+        static SymbolVar make(ComputingGraph &graph, const DeviceTensorND &dv,
+                const OperatorNodeConfig &config = {}) {
+            return graph.insert_opr(std::make_unique<MaybeEmptyTensorOpr>(
+                        graph, dv, config))->output(0);
+        }
+};
+
+} // anonymous namespace
+
+MGB_DYN_TYPE_OBJ_FINAL_IMPL(MaybeEmptyTensorOpr);
+
+TEST(TestMemReuse, ResetEmptyDevTensor) {
+    // reciver opr allow empty tensor as input
+    auto allow_empty = [](const TensorShape& inp_shp) {
+        HostTensorGenerator<> gen;
+        auto g = ComputingGraph::make();
+        auto host_x1 = gen(inp_shp),
+             host_x2 = gen(inp_shp);
+        DeviceTensorND dev_x1, dev_x2;
+        dev_x1.copy_from(*host_x1), dev_x2.copy_from(*host_x2);
+        auto x1 = MaybeEmptyTensorOpr::make(*g, dev_x1, {"x1"}),
+             x2 = MaybeEmptyTensorOpr::make(*g, dev_x2, {"x2"}),
+             y = x1 + x2;
+        HostTensorND host_y;
+        auto func = g->compile({make_callback_copy(y, host_y)});
+        auto &&recv = x1.node()->owner_graph()->var_receiver_in_current_comp_seq(x1.node());
+        ASSERT_TRUE(recv.is_empty_allowed());
+        ASSERT_NO_THROW(func->execute().wait());
+        if (inp_shp.is_empty()) {
+            ASSERT_TRUE(host_y.empty());
+            ASSERT_TRUE(host_y.shape().is_empty());
+        }
+    };
+
+    // reciver opr do not allow empty tensor as input
+    auto forbid_empty = [](const TensorShape& inp_shp) {
+        HostTensorGenerator<> gen;
+        auto g = ComputingGraph::make();
+        auto host_x = gen(inp_shp);
+        DeviceTensorND dev_x;
+        dev_x.copy_from(*host_x);
+        auto x = MaybeEmptyTensorOpr::make(*g, dev_x, {"x"}),
+             y = opr::Reduce::make(x, {opr::Reduce::Mode::MAX, 0});
+        HostTensorND host_y;
+        auto func = g->compile({make_callback_copy(y, host_y)});
+        auto &&recv = x.node()->owner_graph()->var_receiver_in_current_comp_seq(x.node());
+        ASSERT_TRUE(!recv.is_empty_allowed());
+        if (inp_shp.is_empty()) {
+            ASSERT_ANY_THROW(func->execute().wait());
+        } else {
+            ASSERT_NO_THROW(func->execute().wait());
+        }
+    };
+
+    allow_empty({2, 3, 4, 5});
+    allow_empty({2, 0, 3, 4});
+    forbid_empty({4, 5, 6, 7});
+    forbid_empty({8, 0, 0, 9});
 }
 
 // vim: syntax=cpp.doxygen foldmethod=marker foldmarker=f{{{,f}}}

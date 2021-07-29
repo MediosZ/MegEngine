@@ -6,7 +6,8 @@
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or
+ * implied.
  */
 #pragma once
 #include "megdnn/oprs.h"
@@ -38,6 +39,8 @@ DEF(SeparableConvForward, 4, true, true);
 DEF(SeparableFilterForward, 4, true, true);
 DEF(Images2NeibsForward, 2, true, true);
 DEF(Images2NeibsBackward, 2, true, false);
+DEF(SlidingWindowTransposeForward, 2, true, true);
+DEF(SlidingWindowTransposeBackward, 2, true, false);
 DEF(PoolingForward, 2, true, true);
 DEF(PoolingBackward, 4, true, false);
 DEF(AdaptivePoolingForward, 2, true, false);
@@ -54,6 +57,9 @@ DEF(BNForward, 8, true, true);
 DEF(BNBackward, 8, true, false);
 DEF(ROIPoolingForward, 4, true, false);
 DEF(ROIPoolingBackward, 5, true, false);
+DEF(CorrelationForward, 3, true, true);
+DEF(CorrelationBackwardData1, 4, true, true);
+DEF(CorrelationBackwardData2, 4, true, true);
 DEF(WarpPerspectiveForward, 3, true, false);
 DEF(WarpPerspectiveBackwardData, 3, true, false);
 DEF(WarpPerspectiveBackwardMat, 4, true, false);
@@ -116,7 +122,14 @@ DEF(TQTBackward, 5, true, false);
 DEF(PowC, 2, false, true);
 DEF(UniformRNG, 1, true, true);
 DEF(GaussianRNG, 1, true, true);
+DEF(GammaRNG, 3, true, true);
+DEF(BetaRNG, 3, true, true);
+DEF(PoissonRNG, 2, true, true);
+DEF(PermutationRNG, 1, true, true);
 DEF(ChecksumForward, 1, true, false);
+DEF(CheckHasInf, 2, true, true);
+DEF(LSQForward, 5, true, true);
+DEF(LSQBackward, 7, true, false);
 }  // namespace megdnn
 
 // vim: syntax=cpp.doxygen

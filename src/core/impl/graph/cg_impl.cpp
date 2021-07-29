@@ -145,6 +145,24 @@ size_t ComputingGraph::prealloc_static_storage(size_t size) {
 }
 #endif
 
+/* ========================== JITConfig ========================== */
+
+bool ComputingGraph::Options::GraphOpt::JITConfig::enabled() const {
+    if (fuse_dimshuffle != UNSET) return true;
+    if (fuse_reduce != UNSET) return true;
+    return false;
+}
+
+void ComputingGraph::Options::GraphOpt::JITConfig::update(
+        const JITConfig& modifier) {
+    if (modifier.fuse_dimshuffle != UNSET) {
+        this->fuse_dimshuffle = modifier.fuse_dimshuffle;
+    }
+    if (modifier.fuse_reduce != UNSET) {
+        this->fuse_reduce = modifier.fuse_reduce;
+    }
+}
+
 /* ========================== CallbackCaller ========================== */
 MGB_DEFINE_OPR_CLASS(ComputingGraphImpl::CallbackCaller,
                            SingleCNOperatorNodeBase) // {
@@ -249,6 +267,10 @@ ComputingGraphImpl::Components::Components(ComputingGraphImpl* owner)
 #if MGB_ENABLE_SUBLINEAR
           seq_modifier_for_sublinear_memory{owner,
               &(owner->options().sublinear_mem_config)},
+#endif
+#if MGB_ENABLE_DTR
+          seq_modifier_for_dtr{owner,
+              &(owner->options().dtr_config)},
 #endif
 #if MGB_ENABLE_MEMORY_SWAP
           memory_swap_support{owner},
@@ -473,6 +495,7 @@ ComputingGraphImpl::CompileState ComputingGraphImpl::compile_prepare(
 
 #if MGB_ENABLE_SUBLINEAR
     if (options().enable_sublinear_memory_opt) {
+        mgb_assert(!options().enable_dtr_memory_opt);
         if (!sopr_stat.has_virtual_grad) {
             mgb_log_debug(
                     "no virtual grad var; sublinear memory may produce "
@@ -484,6 +507,15 @@ ComputingGraphImpl::CompileState ComputingGraphImpl::compile_prepare(
 #else
     mgb_assert(!options().enable_sublinear_memory_opt);
 #endif  //  MGB_ENABLE_SUBLINEAR
+
+#if MGB_ENABLE_DTR
+    if (options().enable_dtr_memory_opt) {
+        mgb_assert(!options().enable_sublinear_memory_opt);
+        seq_modifier_for_dtr().set_priority_before_opt(dest_vars);
+    }
+#else
+    mgb_assert(!options().enable_dtr_memory_opt);
+#endif //   MGB_ENABLE_DTR
 
 #if !MGB_BUILD_SLIM_SERVING
     mgb_assert(!options().eager_evaluation,
@@ -524,12 +556,18 @@ ComputingGraphImpl::CompileState ComputingGraphImpl::compile_prepare(
 
 
 #if MGB_JIT
-    if (std::abs(options().graph_opt_level) == 0 && options().graph_opt.jit) {
-        setenv("MGB_JIT_BACKEND","NVRTC",1);
+   if (std::abs(options().graph_opt_level) == 0 &&
+        (options().graph_opt.jit || options().graph_opt.jit_config.enabled())) {
+        // Deprecated usage added previously. It allows NVRTC JIT optimization
+        // when graph_opt_level is 0. This usage is not recommanded any more.
+        mgb_log_warn(
+                "It is not recommanded to enable JIT optimization when "
+                "graph_opt_level is 0.");
+        setenv("MGB_JIT_BACKEND", "NVRTC", 1);
         gopt::GraphOptimizer optimizer;
-        optimizer.add_pass<gopt::JITFusionPass>(
-                          sopr_stat.has_virtual_grad,
-                          std::max<uint8_t>(options().graph_opt.jit, 1));
+        optimizer.add_pass<gopt::JITFusionPass>(sopr_stat.has_virtual_grad,
+                                                options().graph_opt.jit,
+                                                options().graph_opt.jit_config);
         optimizer.apply_inplace(dest_vars);
     }
 #endif
@@ -558,7 +596,10 @@ ComputingGraphImpl::CompileState ComputingGraphImpl::compile_prepare(
     CompSeqExtraInfo extra_info;
     cmpnt.seq_comp_node_opt.optimize_comp_nodes(dest_vars);
 
+    bool init_flag = false;
     auto init_opr_seq = [&]() {
+        mgb_assert(!init_flag);
+        init_flag = true;
         ThinHashMap<VarNode*, size_t> var2idx;
         std::unordered_map<CallbackCallerKey, CallbackCallerVal,
                            CallbackCallerKey::Hash>
@@ -629,6 +670,15 @@ ComputingGraphImpl::CompileState ComputingGraphImpl::compile_prepare(
     mgb_assert(!options().enable_memory_swap);
 #endif
 
+#if MGB_ENABLE_DTR
+    if (options().enable_dtr_memory_opt) {
+        MGB_TRY {
+            seq_modifier_for_dtr().modify_endpoint_vars(dest_vars);
+            init_opr_seq();
+        }
+        MGB_FINALLY(seq_modifier_for_dtr().restore_graph_option());
+    }
+#endif
 #if MGB_ENABLE_SUBLINEAR
     if (options().enable_sublinear_memory_opt) {
         MGB_TRY {
@@ -650,12 +700,11 @@ ComputingGraphImpl::CompileState ComputingGraphImpl::compile_prepare(
                  */
                 seq_modifier_for_sublinear_memory().restore_graph_option());
         seq_modifier_for_sublinear_memory().sanity_check(*opr_seq);
-    } else {
+    }
+#endif  //  MGB_ENABLE_SUBLINEAR
+    if (!init_flag) {
         init_opr_seq();
     }
-#else
-    init_opr_seq();
-#endif  //  MGB_ENABLE_SUBLINEAR
 
     return {std::move(extra_info), opr_seq, std::move(dest_vars)};
 }
@@ -748,6 +797,13 @@ VarNode* ComputingGraphImpl::find_var_by_id(size_t id) const {
 SeqModifierForSublinearMemory&
 ComputingGraphImpl::seq_modifier_for_sublinear_memory() {
     return components().seq_modifier_for_sublinear_memory;
+}
+#endif
+
+#if MGB_ENABLE_DTR
+SeqModifierForDTR&
+ComputingGraphImpl::seq_modifier_for_dtr() {
+    return components().seq_modifier_for_dtr;
 }
 #endif
 
@@ -880,7 +936,7 @@ std::string ComputingGraphImpl::get_mem_allocation_info() const {
 
     return objlist->to_string();
 #endif // MGB_ENABLE_JSON
-    mgb_log_warn("mgb is not configured with MGB_ENABLE_JSON on,"
+    mgb_log_warn("target is not configured with JSON BUILD on,"
                  "get_mem_allocation_info returns null string");
     return std::string();
 }

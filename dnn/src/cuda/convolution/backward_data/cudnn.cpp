@@ -21,6 +21,14 @@ using namespace convolution;
 
 bool ConvolutionBackwardDataImpl::AlgoCUDNN::is_available(
         const SizeArgs &args) const {
+    if (args.filter_meta.format != Param::Format::NCHW &&
+        args.filter_meta.format != Param::Format::NHWC) {
+        if (!args.grad_layout->is_contiguous() ||
+            !args.diff_layout->is_contiguous()) {
+            return false;
+        }
+    }
+
     CUDNNBwdDataDescs D;
 
     if (!is_cudnn_supported(args.as_fwd_args()))
@@ -44,9 +52,10 @@ bool ConvolutionBackwardDataImpl::AlgoCUDNN::is_available(
     }
 #endif
 
+    auto& cudnn = args.handle->cudnn();
     args.init_desc(D);
     size_t workspace_size;
-    auto status = cudnnGetConvolutionBackwardDataWorkspaceSize(
+    auto status = cudnn.GetConvolutionBackwardDataWorkspaceSize(
             args.handle->cudnn_handle(),
             D.filter_desc.desc,
             D.diff_desc.desc,
@@ -59,10 +68,11 @@ bool ConvolutionBackwardDataImpl::AlgoCUDNN::is_available(
 
 size_t ConvolutionBackwardDataImpl::AlgoCUDNN::get_workspace_in_bytes(
         const SizeArgs &args) const {
+    auto& cudnn = args.handle->cudnn();
     CUDNNBwdDataDescs D;
     args.init_desc(D);
     size_t workspace_size;
-    auto status = cudnnGetConvolutionBackwardDataWorkspaceSize(
+    auto status = cudnn.GetConvolutionBackwardDataWorkspaceSize(
             args.handle->cudnn_handle(),
             D.filter_desc.desc,
             D.diff_desc.desc,

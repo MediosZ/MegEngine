@@ -1,4 +1,8 @@
 cmake_minimum_required(VERSION 3.15.2)
+message(STATUS "CMAKE_GENERATOR: ${CMAKE_GENERATOR}" )
+if (NOT ${CMAKE_GENERATOR} STREQUAL "Ninja")
+    message(WARNING "CMAKE_GENERATOR NOT EQUAL Ninja, which we do not recommend")
+endif()
 
 include (cmake/FetchMegBrainVersion.cmake)
 project(MegEngine LANGUAGES C CXX VERSION ${MGB_VER_STRING})
@@ -18,6 +22,8 @@ endif()
 
 include(GNUInstallDirs)
 include(CheckCXXCompilerFlag)
+include(CheckIPOSupported)
+
 CHECK_CXX_COMPILER_FLAG(-Wclass-memaccess CXX_SUPPORT_WCLASS_MEMACCESS)
 
 set(MGE_ARCH AUTO CACHE STRING "Architecture on which MegEngine to be built.")
@@ -60,10 +66,12 @@ option(MGE_WITH_MKLDNN "Enable Intel MKL_DNN support," OFF)
 option(MGE_WITH_ROCM "Enable ROCM support" OFF)
 option(MGE_WITH_LARGE_ARCHIVE "Enable big archive link support" OFF)
 option(MGE_BUILD_MEGJS  "Enable megenginejs build" OFF)
+option(MGE_BUILD_WITH_ASAN "Enable build with ASAN, need compiler support" OFF)
+
 
 if(MSVC OR WIN32)
-message(STATUS "windows force cudnn static link")
-set(MGE_WITH_CUDNN_SHARED OFF)
+    message(STATUS "windows force cudnn static link")
+    set(MGE_WITH_CUDNN_SHARED OFF)
 endif()
 
 if(MGE_WITH_NVRTC_STUB OR MGE_WITH_CUDA_STUB)
@@ -82,8 +90,26 @@ if(NOT ${MGE_BIN_REDUCE} STREQUAL "")
     endif()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include ${MGE_BIN_REDUCE}")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -include ${MGE_BIN_REDUCE}")
+endif()
+
+if (NOT APPLE)
+    # check CXX_FUNCTION_DATA_GC_SECTIONS_SUPPORT on APPLE will leak cmake crash
+    CHECK_CXX_COMPILER_FLAG("-ffunction-sections -fdata-sections  -Wl,--gc-sections"  CXX_FUNCTION_DATA_GC_SECTIONS_SUPPORT)
+    if(CXX_FUNCTION_DATA_GC_SECTIONS_SUPPORT)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ffunction-sections -fdata-sections")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ffunction-sections -fdata-sections")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
+        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--gc-sections")
+    endif()
+endif()
+
+check_ipo_supported(RESULT IS_LTO_SUPPORT OUTPUT output_info)
+if(IS_LTO_SUPPORT)
+    message(STATUS "lto is supported in this compiler")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -flto=full")
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -flto=full")
+else()
+    message(STATUS "lto is not supported in this compiler")
 endif()
 
 if(MGE_WITH_MIDOUT_PROFILE)
@@ -160,13 +186,14 @@ if(${MGE_ARCH} STREQUAL "AUTO")
     endif()
 endif()
 
-if((${MGE_ARCH} STREQUAL "x86_64" OR ${MGE_ARCH} STREQUAL "i386" OR ${MGE_ARCH} STREQUAL "armv7" OR ${MGE_ARCH} STREQUAL "aarch64") AND NOT APPLE)
-    option(MGE_ENABLE_CPUINFO "Build cpuinfo library for check runtime." ON)
-    if(MGE_ENABLE_CPUINFO)
-        message(STATUS "Enable cpuinfo runtime check and little kernel optimize.")
-        add_definitions(-DMGB_ENABLE_CPUINFO_CHECK)
-        include(cmake/cpuinfo.cmake)
-    endif()
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    message(STATUS "Setting build type to 'RelWithDebInfo' as none was specified.")
+    set(CMAKE_BUILD_TYPE RelWithDebInfo)
+endif()
+
+if(${CMAKE_BUILD_TYPE} STREQUAL "Release" AND NOT MGE_WITH_TEST AND NOT ${MGE_ARCH} STREQUAL "x86_64")
+    set(MGE_ENABLE_RTTI OFF)
+    message(STATUS "disable MGE_ENABLE_RTTI when Release/NON-x86_64 mode!!")
 endif()
 
 if(MSVC OR WIN32)
@@ -180,13 +207,57 @@ if(MSVC OR WIN32)
     endif()
 
     add_compile_definitions(NOMINMAX=1 _USE_MATH_DEFINES=1 WIN32=1)
-    message(STATUS "into windows build...")
-    message(VERBOSE "CMAKE_C_COMPILER_ID: ${CMAKE_C_COMPILER_ID}")
-    if (${CMAKE_C_COMPILER_ID} STREQUAL "Clang-cl")
+    message(STATUS "into windows build CMAKE_C_COMPILER_ID: ${CMAKE_C_COMPILER_ID}")
+    if (NOT ${CMAKE_C_COMPILER_ID} STREQUAL "Clang" AND NOT ${CMAKE_C_COMPILER_ID} STREQUAL "Clang-cl")
         message(FATAL_ERROR "only support clang-cl for windows build, pls check detail: scripts/cmake-build/BUILD_README.md")
     endif()
+    # on windows need append VS_PATH/VC/Tools/Llvm/x64/lib/clang/${CMAKE_CXX_COMPILER_VERSION}/lib/windows
+    # and VS_PATH/VC/Tools/Llvm/lib/clang/${CMAKE_CXX_COMPILER_VERSION}/lib/windows to PATH env
+    if (MGE_BUILD_WITH_ASAN)
+        message(WARNING "please do (set)export ASAN_OPTIONS=windows_hook_rtl_allocators=true when run test after build finish, caused by we link asan dll!!")
+        if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+            message(WARNING "Windows AddressSanitizer doesn't support linking with debug runtime libraries yet, which means do not support CMAKE_BUILD_TYPE=Debug")
+            message(FATAL_ERROR "Please build with RelWithDebInfo or Release by : EXTRA_CMAKE_ARGS=\"-DMGE_BUILD_WITH_ASAN=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo ...\"")
+        endif()
+        if("$ENV{VS_PATH}" STREQUAL "")
+            message(FATAL_ERROR "can not find VS_PATH, please export Visual Studio root dir to VS_PATH env")
+        endif()
+        if(${MGE_ARCH} STREQUAL "x86_64")
+            set(WINDOWS_ASAN_DLL_NAME "clang_rt.asan_dynamic-x86_64.lib")
+            set(WINDOWS_ASAN_RUNTIME_THUNK_NAME "clang_rt.asan_dynamic_runtime_thunk-x86_64")
+            set(WINDOWS_ASAN_PATH_SUFFIXES "VC/Tools/Llvm/x64/lib/clang/${CMAKE_CXX_COMPILER_VERSION}/lib/windows")
+        elseif(${MGE_ARCH} STREQUAL "i386")
+            set(WINDOWS_ASAN_DLL_NAME "clang_rt.asan_dynamic-i386.lib")
+            set(WINDOWS_ASAN_RUNTIME_THUNK_NAME "clang_rt.asan_dynamic_runtime_thunk-i386.lib")
+            set(WINDOWS_ASAN_PATH_SUFFIXES "VC/Tools/Llvm/lib/clang/${CMAKE_CXX_COMPILER_VERSION}/lib/windows")
+        else()
+            message(FATAL_ERROR "unsupport asan ARCH: ${MGE_ARCH} on Windows")
+        endif()
+        find_path(ASAN_DLL_PATH
+            NAMES ${WINDOWS_ASAN_DLL_NAME}
+            HINTS $ENV{VS_PATH}
+            PATH_SUFFIXES ${WINDOWS_ASAN_PATH_SUFFIXES}
+            DOC "Windows asan library path" )
+        if(ASAN_DLL_PATH STREQUAL "ASAN_DLL_PATH-NOTFOUND")
+            message(FATAL_ERROR "can not find asan dll, please upgrade you LLVM")
+        endif()
+
+        message(STATUS "Windows asan dll path: ${ASAN_DLL_PATH}")
+        link_directories(${ASAN_DLL_PATH})
+        link_libraries(${WINDOWS_ASAN_DLL_NAME})
+        link_libraries(${WINDOWS_ASAN_RUNTIME_THUNK_NAME})
+        set(WIN_FLAGS "/Od -DNDEBUG -fsanitize=address")
+        # windows Llvm asan do not take effect when /O2
+        # RELWITHDEBINFO default value is /O2, so override it
+        set(CMAKE_C_FLAGS_RELWITHDEBINFO "/Zi /Od /Ob1 /DNDEBUG")
+        set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "/Zi /Od /Ob1 /DNDEBUG")
+        set(CMAKE_C_FLAGS_RELEASE "/Zi /Od /Ob1 /DNDEBUG")
+        set(CMAKE_CXX_FLAGS_RELEASE "/Zi /Od /Ob1 /DNDEBUG")
+    else()
+        set(WIN_FLAGS "/O2")
+    endif()
     # add flags for enable sse instruction optimize for X86, enable avx header to compile avx code
-    set(WIN_FLAGS "-msse4.2 -O2 -D_AVX_ -D_AVX2_ -D__AVX__ -D__AVX2__ -D__FMA__")
+    set(WIN_FLAGS "${WIN_FLAGS} -msse4.2 -D_AVX_ -D_AVX2_ -D__AVX__ -D__AVX2__ -D__FMA__")
     # if u CPU is cascadelake series, u can enable for performance
     # set(WIN_FLAGS "{WIN_FLAGS} -march=cascadelake -mtune=cascadelake")
     # set(WIN_FLAGS "{WIN_FLAGS} -mavx512cd -mavx512vl -mavx512dq -mavx512bw -mavx512vbmi -mavx512vnni")
@@ -213,14 +284,35 @@ if(MSVC OR WIN32)
     set(MGE_WITH_DISTRIBUTED OFF)
 else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
-    set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g")
-    if(ANDROID)
-        set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -DNDEBUG")
-        set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-Ofast -DNDEBUG -g")
 
+    # NONE windows DEBUG general flags
+    if(MGE_BUILD_WITH_ASAN)
+        set(CMAKE_C_FLAGS_DEBUG "-O0 -g -fsanitize=address -fno-omit-frame-pointer")
+        set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g -fsanitize=address -fno-omit-frame-pointer")
     else()
-        set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
-        set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -DNDEBUG -g")
+        set(CMAKE_C_FLAGS_DEBUG "-O0 -g")
+        set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g")
+    endif()
+
+    # NONE windows opt general flags
+    if (MGE_BUILD_WITH_ASAN)
+        set(OPTIMIZE_LEVEL "-g -O0 -DNDEBUG -fsanitize=address -fno-omit-frame-pointer")
+    elseif(ANDROID)
+        set(OPTIMIZE_LEVEL "-g -Ofast -DNDEBUG")
+    else()
+        set(OPTIMIZE_LEVEL "-g -O3 -DNDEBUG")
+    endif()
+    set(CMAKE_C_FLAGS_RELEASE "${OPTIMIZE_LEVEL}")
+    set(CMAKE_CXX_FLAGS_RELEASE "${OPTIMIZE_LEVEL}")
+    set(CMAKE_C_FLAGS_RELWITHDEBINFO "${OPTIMIZE_LEVEL}")
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${OPTIMIZE_LEVEL}")
+    #some gnu(gcc) compiler use -static -libasan have runtime issue
+    #also, when target is big, clang ld will take a long long long
+    #time when use -static-libsan, so we use dynamic asan by default
+    #ANDROID asan.so depends on log, so broadcast log link_libraries
+    #for megengine depends target, for example flatc target
+    if (MGE_BUILD_WITH_ASAN AND ANDROID)
+        link_libraries(log)
     endif()
 endif()
 
@@ -302,6 +394,19 @@ if(NOT MGE_WITH_CUDA)
 endif()
 
 find_package(PythonInterp 3 REQUIRED)
+# NOTICE: just use for target, which do not depend on python api
+# PURPOSE: reuse target obj when switch python3 version
+# will fallback to PYTHON_EXECUTABLE if can not find in PATH env
+set(PYTHON3_IN_ENV "python3")
+find_program(PYTHON3_EXECUTABLE_WITHOUT_VERSION ${PYTHON3_IN_ENV})
+if (PYTHON3_EXECUTABLE_WITHOUT_VERSION)
+    message(STATUS "use ${PYTHON3_IN_ENV} as PYTHON3_EXECUTABLE_WITHOUT_VERSION")
+    set(PYTHON3_EXECUTABLE_WITHOUT_VERSION ${PYTHON3_IN_ENV})
+else()
+    message(STATUS "fallback ${PYTHON_EXECUTABLE} as PYTHON3_EXECUTABLE_WITHOUT_VERSION,\
+    target which depend on PYTHON3_EXECUTABLE_WITHOUT_VERSION will be rebuild when switch python3")
+    set(PYTHON3_EXECUTABLE_WITHOUT_VERSION ${PYTHON_EXECUTABLE})
+endif()
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads)
@@ -320,11 +425,6 @@ if(NOT CMAKE_CUDA_HOST_COMPILER)
     set(CMAKE_CUDA_HOST_COMPILER $(CMAKE_CXX_COMPILER))
 endif()
 
-if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
-    message(STATUS "Setting build type to 'RelWithDebInfo' as none was specified.")
-    set(CMAKE_BUILD_TYPE RelWithDebInfo)
-endif()
-
 if(NOT MGE_ENABLE_RTTI)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
 endif()
@@ -341,8 +441,8 @@ if(MGE_BUILD_IMPERATIVE_RT OR MGE_BUILD_MEGJS)
     set(CMAKE_CXX_STANDARD 17)
 endif()
 
-if(NOT MGE_WITH_CUDA)
-    message(STATUS "Disable distributed support, as CUDA is not enabled.")
+if(NOT ${MGE_WITH_CUDA} AND NOT ${MGE_WITH_ROCM})
+    message(STATUS "Disable distributed support, as both CUDA and ROCm are disabled.")
     set(MGE_WITH_DISTRIBUTED OFF)
 endif()
 
@@ -382,7 +482,7 @@ if(MGE_WITH_CUDA)
     set(CMAKE_CUDA_FLAGS_MINSIZEREL "-Os")
     if(MSVC OR WIN32)
         set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xfatbin -compress-all")
-        set(CCBIN_FLAG "${CCBIN_FLAG} /wd4819 /wd4334 /wd4267 /wd4002 /wd4244 /wd4068")
+        set(CCBIN_FLAG "${CCBIN_FLAG} /wd4819 /wd4334 /wd4267 /wd4002 /wd4244 /wd4068 /std:c++14")
         if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
             set(CCBIN_FLAG "${CCBIN_FLAG} -D_ITERATOR_DEBUG_LEVEL=2 -MTd")
         endif()
@@ -500,7 +600,7 @@ if(MGE_WITH_CUDA)
                 if(MGE_WITH_CUBLAS_SHARED)
                     list(APPEND MGE_CUDA_LIBS cublasLt)
                 else()
-                    list(APPEND MGE_CUDA_LIBS cublasLt_static)
+                    list(APPEND MGE_CUDA_LIBS cublasLt_static culibos)
                 endif()
             endif()
         endif()
@@ -577,6 +677,16 @@ if(MGE_WITH_CUDA)
         set(MGE_CUDA_LIBS "${MGE_CUDA_LIBS} -ldl")
     endif()
 
+endif()
+
+###########please add_subdirectory from here###############
+if((${MGE_ARCH} STREQUAL "x86_64" OR ${MGE_ARCH} STREQUAL "i386" OR ${MGE_ARCH} STREQUAL "armv7" OR ${MGE_ARCH} STREQUAL "aarch64") AND NOT APPLE)
+    option(MGE_ENABLE_CPUINFO "Build cpuinfo library for check runtime." ON)
+    if(MGE_ENABLE_CPUINFO)
+        message(STATUS "Enable cpuinfo runtime check and little kernel optimize.")
+        add_definitions(-DMGB_ENABLE_CPUINFO_CHECK)
+        include(cmake/cpuinfo.cmake)
+    endif()
 endif()
 
 if(MGE_WITH_CAMBRICON)
@@ -701,6 +811,11 @@ ENDIF()
 set(MGB_JIT ${MGE_WITH_JIT})
 set(MGB_JIT_MLIR ${MGE_WITH_JIT_MLIR})
 set(MGB_JIT_HALIDE ${MGE_WITH_HALIDE})
+# for consumer override MGB_C_OPR_INIT_FUNC symbol interface
+if(NOT "${CUSTOM_C_OPR_INIT_FUNC}" STREQUAL "")
+    add_compile_definitions(MGB_C_OPR_INIT_FUNC=${CUSTOM_C_OPR_INIT_FUNC})
+    message(STATUS "override MGB_C_OPR_INIT_FUNC to ${CUSTOM_C_OPR_INIT_FUNC}")
+endif()
 
 if(MSVC OR WIN32)
     set(CMAKE_HAVE_THREADS_LIBRARY 1)
@@ -794,7 +909,7 @@ if(MGE_ARCH STREQUAL "x86_64" OR MGE_ARCH STREQUAL "i386")
     endif()
 endif()
 # dotprod is not enable by default on APPLE, cpuinfo has some problem on APPLE
-if(NOT APPLE)
+if(NOT APPLE AND ${CMAKE_C_COMPILER_ID} STREQUAL "Clang")
     CHECK_CXX_COMPILER_FLAG("-march=armv8.2-a+dotprod" CXX_COMPILER_SUPPORT_DOT)
     if(CXX_COMPILER_SUPPORT_DOT)
         message(STATUS "Enable dotprod feature in armv8.2-a using MGB_ENABLE_DOT")
@@ -856,10 +971,8 @@ set(MGB_OPR_PARAM_DEFS_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/dnn/scripts/gen_param_
 set(MGB_OPR_PARAM_DEFS_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/src/opr/include/)
 file(MAKE_DIRECTORY ${MGB_OPR_PARAM_DEFS_OUT_DIR}/megbrain/opr)
 add_custom_command(
-    OUTPUT
-        ${MGB_OPR_PARAM_DEFS_OUT_DIR}/megbrain/opr/param_defs.h
-    COMMAND ${PYTHON_EXECUTABLE} ${MGB_OPR_PARAM_DEFS_SCRIPT} ${MGB_OPR_PARAM_DEFS_SRCS}
-        ${MGB_OPR_PARAM_DEFS_OUT_DIR}/megbrain/opr/param_defs.h
+    OUTPUT ${MGB_OPR_PARAM_DEFS_OUT_DIR}/megbrain/opr/param_defs.h
+    COMMAND ${PYTHON3_EXECUTABLE_WITHOUT_VERSION} ${MGB_OPR_PARAM_DEFS_SCRIPT} ${MGB_OPR_PARAM_DEFS_SRCS} ${MGB_OPR_PARAM_DEFS_OUT_DIR}/megbrain/opr/param_defs.h
     DEPENDS ${MGB_OPR_PARAM_DEFS_SRCS} ${MGB_OPR_PARAM_DEFS_SCRIPT}
     VERBATIM
 )
@@ -892,9 +1005,10 @@ if(MGE_WITH_JIT_MLIR OR MGE_BUILD_IMPERATIVE_RT OR MGE_BUILD_MEGJS)
     file(READ ${PROJECT_SOURCE_DIR}/tools/param_defs/mgb_opr_param_defs.py CONTENTS)
     file(APPEND ${OPR_PARAM_DEFS_SRCS} ${CONTENTS})
     file(MAKE_DIRECTORY ${MGE_GEN_IR_DIR})
-    add_custom_target(param_defs_tblgen
-        COMMAND ${PYTHON_EXECUTABLE} ${OPR_PARAM_DEFS_SCRIPT} ${OPR_PARAM_DEFS_SRCS} ${OPR_PARAM_DEFS_OUT}
-        DEPENDS ${OPR_PARAM_DEFS_SRCS} ${OPR_PARAM_DEFS_SCRIPT}
+    add_custom_command(
+        OUTPUT ${OPR_PARAM_DEFS_OUT}
+        COMMAND ${PYTHON3_EXECUTABLE_WITHOUT_VERSION} ${OPR_PARAM_DEFS_SCRIPT} ${OPR_PARAM_DEFS_SRCS} ${OPR_PARAM_DEFS_OUT}
+        DEPENDS ${PROJECT_SOURCE_DIR}/dnn/scripts/opr_param_defs.py ${PROJECT_SOURCE_DIR}/tools/param_defs/mgb_opr_param_defs.py ${OPR_PARAM_DEFS_SCRIPT}
         VERBATIM
     )
     # mlir tblgen sources
@@ -902,9 +1016,13 @@ if(MGE_WITH_JIT_MLIR OR MGE_BUILD_IMPERATIVE_RT OR MGE_BUILD_MEGJS)
     set(MGE_IR_INCLUDE_DIRS ${MLIR_LLVM_INCLUDE_DIR} ${MGE_IR_DIR} ${MGE_GEN_IR_DIR})
     list(TRANSFORM MGE_IR_INCLUDE_DIRS PREPEND "-I")
     file(GLOB_RECURSE MGE_IR_TDS ${MGE_IR_DIR}/*.td)
+    add_custom_target(param_defs_tblgen DEPENDS ${OPR_PARAM_DEFS_OUT})
 endif()
 
 if(MGE_WITH_DISTRIBUTED)
+    set(MEGRAY_WITH_NCCL ${MGE_WITH_CUDA} CACHE BOOL "Override MegRay option" FORCE)
+    set(MEGRAY_WITH_SHM ${MGE_WITH_CUDA} CACHE BOOL "Override MegRay option" FORCE)
+    set(MEGRAY_WITH_RCCL ${MGE_WITH_ROCM} CACHE BOOL "Override MegRay option" FORCE)
     add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/MegRay)
 endif()
 

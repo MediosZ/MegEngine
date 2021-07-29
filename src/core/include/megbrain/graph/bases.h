@@ -18,6 +18,10 @@
 
 #include <string>
 
+#ifndef MGB_ENABLE_DTR
+#define MGB_ENABLE_DTR ((!MGB_BUILD_SLIM_SERVING) && (!!MGB_HAVE_THREAD))
+#endif  //  MGB_ENABLE_DTR
+
 #ifndef MGB_ENABLE_SUBLINEAR
 #define MGB_ENABLE_SUBLINEAR ((!MGB_BUILD_SLIM_SERVING) && (!!MGB_HAVE_THREAD))
 #endif  //  MGB_ENABLE_SUBLINEAR
@@ -190,6 +194,12 @@ class AsyncExecutable : public json::Serializable,
                     m_user_data.get_user_data<OutputVarsUserData>();
             return (*(output_vars_pair.first))->get_output_vars();
         }
+#ifndef __IN_TEE_ENV__
+        virtual void get_static_memory_alloc_info(const std::string& svg_name) {
+            mgb_assert(svg_name.length() < 0,
+                       "can't call this function directly\n");
+        }
+#endif
 };
 
 

@@ -53,6 +53,8 @@ def ConvolutionBackwardData: MgbHashableOp<"ConvolutionBackwardData", [Convoluti
 
 def Convolution3D: MgbHashableOp<"Convolution3D", [Convolution3DParam, ExecutionPolicyParamBase<"policy">]>;
 
+def Convolution3DBackwardData: MgbHashableOp<"Convolution3DBackwardData", [Convolution3DParam, ExecutionPolicyParamBase<"policy">]>;
+
 def DeformableConv : MgbHashableOp<"DeformableConv", [ConvolutionParam, ExecutionPolicyParamBase<"policy">]>;
 
 def GroupLocal: MgbHashableOp<"GroupLocal", [ConvolutionParam]>;
@@ -77,9 +79,14 @@ def BatchConvBias : MgbHashableOp<"BatchConvBias", [BatchConvBiasParam, Executio
   );
 }
 
+def Images2Neibs : MgbHashableOp<"Images2Neibs", [Images2NeibsParam]>;
+
+def SlidingWindowTranspose : MgbHashableOp<"SlidingWindowTranspose", [SlidingWindowTransposeParam]>;
+
 def BatchNorm : MgbHashableOp<"BatchNorm", [BNParam]>;
 
 def ROIAlign: MgbHashableOp<"ROIAlign", [ROIAlignParam]>;
+def Correlation: MgbHashableOp<"Correlation", [CorrelationParam]>;
 
 def WarpPerspective: MgbHashableOp<"WarpPerspective", [WarpPerspectiveParam]>;
 
@@ -112,17 +119,96 @@ def TopK: MgbHashableOp<"TopK", [TopKParam]>;
 def NvOf: MgbHashableOp<"NvOf", [NvOfParam]>;
 
 def UniformRNG: MgbHashableOp<"UniformRNG", [UniformRNGParam]> {
-  let hashFunction = [{return mgb::hash($_self.dyn_typeinfo());}];
-  let cmpFunction = [{return true;}];
-}
-
-def GaussianRNG: MgbHashableOp<"GaussianRNG", [GaussianRNGParam]> {
+  let extraArguments = (ins
+    MgbSizeTAddr:$handle
+  );
   let hashFunction = [{
     return mgb::hash_pair_combine(
       mgb::hash($_self.dyn_typeinfo()),
-      mgb::hash_pair_combine(mgb::hash($_self.mean), mgb::hash($_self.std)));
+      mgb::hash_pair_combine(
+        mgb::hash($_self.handle),
+        mgb::hash($_self.dtype.enumv())
+      )
+    );
   }];
-  let cmpFunction = [{return $0.mean == $1.mean && $0.std == $1.std;}];
+  let cmpFunction = [{return $0.handle == $1.handle && $0.dtype == $1.dtype;}];
+}
+
+def GaussianRNG: MgbHashableOp<"GaussianRNG", [GaussianRNGParam]> {
+  let extraArguments = (ins
+    MgbSizeTAddr:$handle
+  );
+  let hashFunction = [{
+    return mgb::hash_pair_combine(
+      mgb::hash($_self.dyn_typeinfo()),
+      mgb::hash_pair_combine(
+        mgb::hash($_self.handle),
+        mgb::hash_pair_combine(
+          mgb::hash($_self.mean),
+          mgb::hash_pair_combine(
+            mgb::hash($_self.std),
+            mgb::hash($_self.dtype.enumv())
+          )
+        )
+      )
+    );
+  }];
+  let cmpFunction = [{return $0.handle == $1.handle && $0.mean == $1.mean && $0.std == $1.std && $0.dtype == $1.dtype;}];
+}
+
+def GammaRNG: MgbHashableOp<"GammaRNG", [GammaRNGParam]> {
+  let extraArguments = (ins
+    MgbSizeTAddr:$handle
+  );
+  let hashFunction = [{
+    return mgb::hash_pair_combine(
+      mgb::hash($_self.dyn_typeinfo()),
+      mgb::hash($_self.handle)
+      );
+  }];
+  let cmpFunction = [{return $0.handle == $1.handle;}];
+}
+
+def PoissonRNG: MgbHashableOp<"PoissonRNG", [PoissonRNGParam]> {
+  let extraArguments = (ins
+    MgbSizeTAddr:$handle
+  );
+  let hashFunction = [{
+    return mgb::hash_pair_combine(
+      mgb::hash($_self.dyn_typeinfo()),
+      mgb::hash($_self.handle)
+      );
+  }];
+  let cmpFunction = [{return $0.handle == $1.handle;}];
+}
+
+def BetaRNG: MgbHashableOp<"BetaRNG", [BetaRNGParam]> {
+  let extraArguments = (ins
+    MgbSizeTAddr:$handle
+  );
+  let hashFunction = [{
+    return mgb::hash_pair_combine(
+      mgb::hash($_self.dyn_typeinfo()),
+      mgb::hash($_self.handle)
+      );
+  }];
+  let cmpFunction = [{return $0.handle == $1.handle;}];
+}
+
+def PermutationRNG: MgbHashableOp<"PermutationRNG", [PermutationRNGParam]> {
+  let extraArguments = (ins
+    MgbSizeTAddr:$handle
+  );
+  let hashFunction = [{
+    return mgb::hash_pair_combine(
+      mgb::hash($_self.dyn_typeinfo()),
+      mgb::hash_pair_combine(
+        mgb::hash($_self.handle),
+        mgb::hash($_self.dtype.enumv())
+      )
+    );
+  }];
+  let cmpFunction = [{return $0.handle == $1.handle && $0.dtype == $1.dtype;}];
 }
 
 def Linspace: MgbHashableOp<"Linspace", [LinspaceParam]> {
@@ -169,7 +255,8 @@ def RemoteSend : MgbHashableOp<"RemoteSend"> {
     MgbStringAttr:$key,
     MgbStringAttr:$addr,
     MgbUI32Attr:$port,
-    MgbUI32Attr:$rank_to
+    MgbUI32Attr:$rank_to,
+    MgbStringAttr:$backend
   );
 }
 
@@ -181,7 +268,8 @@ def RemoteRecv : MgbHashableOp<"RemoteRecv"> {
     MgbUI32Attr:$rank_from,
     MgbCompNodeAttr:$cn,
     MgbTensorShapeAttr:$shape,
-    MgbDTypeAttr:$dtype
+    MgbDTypeAttr:$dtype,
+    MgbStringAttr:$backend
   );
 }
 
@@ -248,6 +336,7 @@ def BatchedSetMeshIndexing: FancyIndexingBase<"BatchedSetMeshIndexing">;
 def FakeQuant: MgbHashableOp<"FakeQuant", [FakeQuantParam]>;
 def AssertEqual: MgbHashableOp<"AssertEqual",[AssertEqualParam]>;
 def TQT: MgbHashableOp<"TQT", [TQTParam]>;
+def LSQ: MgbHashableOp<"LSQ", [LSQParam]>;
 def ElemwiseMultiType: MgbHashableOp<"ElemwiseMultiType", [ElemwiseMultiTypeParam]> {
   let extraArguments = (ins
     MgbDTypeAttr:$dtype
@@ -283,5 +372,9 @@ def CambriconRuntime: MgbHashableOp<"CambriconRuntime"> {
 }
 
 def CvtColor: MgbHashableOp<"CvtColor", [CvtColorParam]>;
+
+def CheckHasInf: MgbHashableOp<"CheckHasInf", [EmptyParam]>;
+
+def FastpathCopy: MgbHashableOp<"FastpathCopy">;
 
 #endif // MGB_OPS

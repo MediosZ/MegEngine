@@ -19,6 +19,7 @@ from megengine.core.tensor import megbrain_graph as mgb_graph
 from megengine.core.tensor.megbrain_graph import apply_normal_varnode
 from megengine.core.tensor.utils import astensor1d
 from megengine.jit import trace
+from megengine.utils.network import Network
 
 
 def make_dev_tensor(value, dtype=None, device=None):
@@ -88,7 +89,7 @@ def test_graph_traversal():
     file = io.BytesIO()
     fun.dump(file, optimize_for_inference=False)
     file.seek(0)
-    cg, _, outputs = mgb_graph.load_graph(file)
+    outputs = mgb_graph.load_graph(file).output_vars_list
 
     _, map_vars, var2oprs, *_ = cgtools.graph_traversal(outputs)
     input_var = map_vars[1]
@@ -101,7 +102,9 @@ def test_load_refcnt():
     graph = mgb_graph.Graph()
     varnode = graph.make_const(0)
     buf, _ = mgb_graph.dump_graph([varnode])
-    graph, _, (varnode,) = mgb_graph.load_graph(io.BytesIO(buf))
+    ret = mgb_graph.load_graph(io.BytesIO(buf))
+    graph, (varnode,) = ret.graph, ret.output_vars_list
+    del ret
     del graph
     varnode.owner
 
@@ -132,13 +135,53 @@ def test_get_opr_seq():
     file = io.BytesIO()
     func.dump(file, optimize_for_inference=False)
     file.seek(0)
-    *_, outputs = mgb_graph.load_graph(file)
+    outputs = mgb_graph.load_graph(file).output_vars_list
 
     seq_1 = cgtools.get_oprs_seq(outputs, True)
     assert len(seq_1) == 5
 
     seq_2 = cgtools.get_oprs_seq(outputs, False)
     assert len(seq_2) == 6
+
+
+def test_topological_sort():
+    @trace(symbolic=True, capture_as_const=True)
+    def func(x, y):
+        a = x + y
+        a1 = F.relu(a)
+        a2 = F.abs(a)
+        a3 = F.ceil(a) * 2
+        a4 = F.floor(a)
+        r = a1 - a2
+        r1 = a3 / a4
+        return r, r1
+
+    file = io.BytesIO()
+    func(megengine.tensor(1.0), megengine.tensor(2.0))
+    func.dump(
+        file, optimize_for_inference=False, keep_opr_name=True, keep_opr_priority=True
+    )
+    file.seek(0)
+    g = Network.load(file)
+    oprseq1 = g.all_oprs
+    gt = [
+        "Host2DeviceCopy",
+        "Host2DeviceCopy",
+        "ADD",
+        "RELU",
+        "ABS",
+        "CEIL",
+        "ImmutableTensor",
+        "MUL",
+        "FLOOR",
+        "SUB",
+        "TRUE_DIV",
+    ]
+    for op, mode in zip(oprseq1, gt):
+        if op.type == "Elemwise":
+            assert op.params["mode"] == mode
+        else:
+            assert op.type == mode
 
 
 def test_graph_function():

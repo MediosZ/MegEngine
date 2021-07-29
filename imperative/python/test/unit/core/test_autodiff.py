@@ -20,7 +20,6 @@ from megengine.core._imperative_rt import CompNode, TensorAttr, imperative
 from megengine.core._imperative_rt.core2 import TensorWeakRef, apply, sync
 from megengine.core.autodiff.grad import Grad
 from megengine.core.ops.builtin import Elemwise, Identity
-from megengine.distributed.helper import get_device_count_by_fork
 from megengine.functional.distributed import remote_recv, remote_send
 
 
@@ -67,7 +66,7 @@ def test_dist_grad():
             grad.wrt(x, callback=save_to(x))
             # need a placeholder to trace operator
             remote_send(x, 1)
-            recv_x = remote_recv(1, x_np.shape, x_np.dtype)
+            recv_x = remote_recv(1)
             y = recv_x * recv_x
 
             grad([y], [as_tensor(np.ones_like(x_np))])
@@ -75,7 +74,7 @@ def test_dist_grad():
         elif rank == 1:
             grad = Grad()
 
-            recv_x = remote_recv(0, x_np.shape, x_np.dtype)
+            recv_x = remote_recv(0)
             remote_send(recv_x, 0)
 
             grad([], [])
@@ -108,22 +107,26 @@ def test_grad_2():
     np.testing.assert_almost_equal(x.grad.numpy(), 4 * x_np ** 3, decimal=6)
 
 
-@pytest.mark.skip(reason="high order gradient was not implemented yet")
+@pytest.mark.require_higher_order_directive()
 def test_2nd_grad():
     x_np = np.random.rand(10).astype("float32")
     x = as_tensor(x_np)
     ones = as_tensor(np.ones_like(x_np))
 
     grad = Grad().wrt(x, callback=save_to(x))
+    grad._priority = -1
     grad2 = Grad().wrt(x, callback=save_to(x))
+    grad2._priority = 0
 
     y = cos(x)
 
     grad(y, ones)
+    z = x.grad
     np.testing.assert_almost_equal(x.grad.numpy(), -np.sin(x_np), decimal=5)
 
-    grad2(x.grad, ones)
-    np.testing.assert_almost_equal(x.grad.numpy(), -np.cos(x_np))
+    x.grad = None
+    grad2(z, ones)
+    np.testing.assert_almost_equal(x.grad.numpy(), -np.cos(x_np), decimal=5)
 
 
 def test_grad_with_tensor_wrapper():
@@ -442,3 +445,18 @@ def test_removeAxis():
 
     grad(y, F.ones_like(y))
     np.testing.assert_equal(np.ones((3, 3, 1, 1), dtype=np.float32), x.grad.numpy())
+
+
+def test_dot():
+    x = np.random.rand(2, 2).astype("float32")
+    x = mge.Tensor(x)
+    u = F.ones((2,))
+    v = F.ones((2,))
+    grad = Grad().wrt(x, callback=save_to(x))
+
+    def f(x):
+        return F.dot(u, F.matmul(x, v))
+
+    y = f(x)
+    grad(y, F.ones_like(y))
+    np.testing.assert_equal(np.ones((2, 2), dtype=np.float32), x.grad.numpy())

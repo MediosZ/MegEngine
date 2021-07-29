@@ -6,22 +6,18 @@
 # Unless required by applicable law or agreed to in writing,
 # software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-import abc
 import json
 import sys
-from typing import Callable, Sequence
+from typing import Sequence
 
 import numpy as np
 
 from ..core import _imperative_rt as rt
-from ..core._imperative_rt.core2 import SymbolVar
+from ..core._imperative_rt.core2 import SymbolVar, apply
+from ..core._trace_option import use_symbolic_shape
 from ..core._wrap import Device
 from ..core.ops import builtin
 from ..core.tensor.array_method import ArrayMethodMixin
-from ..core.tensor.indexing import getitem as _getitem
-from ..core.tensor.indexing import setitem as _setitem
-from ..core.tensor.megbrain_graph import InputNode, OutputNode
-from ..tensor import Tensor
 from .comp_graph_tools import replace_vars
 from .module_stats import (
     preprocess_receptive_field,
@@ -41,6 +37,7 @@ class VarNodeMeta(type(SymbolVar), type(ArrayMethodMixin)):
 class VarNode(NetworkNode, SymbolVar, ArrayMethodMixin, metaclass=VarNodeMeta):
     def __init__(self, var=None, *, owner_opr=None, name=None):
         SymbolVar.__init__(self, var)
+        self.users = []  # List[OpNode]
         self.owner = owner_opr
         self.name = name
         self.id = id(self)
@@ -53,19 +50,49 @@ class VarNode(NetworkNode, SymbolVar, ArrayMethodMixin, metaclass=VarNodeMeta):
         obj.owner = owner_opr
         return obj
 
+    def _get_var_shape(self, axis=None):
+        opdef = (
+            builtin.GetVarShape() if axis is None else builtin.GetVarShape(axis=axis)
+        )
+        return apply(opdef, self)[0]
+
+    @property
+    def partial_shape(self):
+        """Return the tuple type inferred shape of VarNode
+        """
+        return tuple(self._get_var_shape().numpy())
+
+    def shapeof(self, axis):
+        """Return the symbolic shape of axis
+        """
+        return self._get_var_shape(axis=axis) if self.var else None
+
+    @property
+    def _tuple_shape(self):
+        return self.partial_shape
+
     @property
     def shape(self):
+        """Return the symbolic shape if using set_symbolic_shape(True)
+           else inferred shape
+        """
         rst = None
         if self.var:
             try:
                 rst = self.var.shape
             except:
                 rst = None
-        return rst
+        if not use_symbolic_shape():
+            return rst
+        return self._get_var_shape() if self.var else None
 
     @property
     def dtype(self):
         return self.var.dtype if self.var else None
+
+    @property
+    def ndim(self):
+        return super().ndim
 
     def __bool__(self):
         return False
@@ -78,27 +105,21 @@ class VarNode(NetworkNode, SymbolVar, ArrayMethodMixin, metaclass=VarNodeMeta):
     def __hash__(self):
         return id(self)
 
-    @property
-    def _tuple_shape(self):
-        return self.var.shape
-
     def numpy(self):
-        o = OutputNode(self.var)
-        self.graph.compile(o.outputs).execute()
-        return o.get_value().numpy()
+        return super().numpy()
 
-    def __getitem__(self, index):
-        return _getitem(self, index)
-
-    def __setitem__(self, index, value):
-        if index is not Ellipsis:
-            value = _setitem(self, index, value)
+    def _reset(self, other):
+        if not isinstance(other, VarNode):
+            assert self.graph, "VarNode _reset must have graph"
+            node = ImmutableTensor(other, graph=self.graph)
+            node.compile(self.graph)
+            other = node.outputs[0]
         if self.owner is not None:
             idx = self.owner.outputs.index(self)
             self.owner.outputs[idx] = VarNode(
                 self.var, owner_opr=self.owner, name=self.var.name
             )
-        self.var = value.var
+        self.var = other.var
         self.owner = None
 
     def set_owner_opr(self, owner_opr):
@@ -115,7 +136,16 @@ class OpNode(NetworkNode):
         self.outputs = []
         self.params = {}
         self._opr = None  # mgb opnode
-        self.id = id(self)
+
+    @property
+    def id(self):
+        return id(self)
+
+    @property
+    def priority(self):
+        if self._opr is not None:
+            return (self._opr.priority, self._opr.id)
+        return (0, 0)
 
     @classmethod
     def load(cls, opr):
@@ -125,16 +155,21 @@ class OpNode(NetworkNode):
         obj._opr = opr
         return obj
 
-    def compile(self, graph=None):
-        op = self.opdef(**self.params)
-        args = [i.var for i in self.inputs]
-        outputs = rt.invoke_op(op, args)
-        assert len(outputs) == len(self.outputs)
-        self._opr = outputs[0].owner
-        for i in range(len(self.outputs)):
-            self.outputs[i].var = outputs[i]
-            self.outputs[i].var.name = self.outputs[i].name
-            assert self.outputs[i].owner is self
+    def compile(self):
+        if (
+            self._opr is None
+            or len(self._opr.inputs) != len(self.inputs)
+            or any([i != j.var for i, j in zip(self._opr.inputs, self.inputs)])
+        ):
+            op = self.opdef(**self.params)
+            args = [i.var for i in self.inputs]
+            outputs = rt.invoke_op(op, args)
+            assert len(outputs) == len(self.outputs)
+            self._opr = outputs[0].owner
+            for i in range(len(self.outputs)):
+                self.outputs[i].var = outputs[i]
+                self.outputs[i].var.name = self.outputs[i].name
+                assert self.outputs[i].owner is self
 
     def add_inp_var(self, x):
         self.inputs.append(x)
@@ -178,18 +213,26 @@ class Host2DeviceCopy(OpNode):
         return self
 
     def compile(self, graph):
-        outputs = rt.make_h2d(graph, self.device, self.dtype, self.shape, self.name)
-        self._opr = outputs.owner
-        if len(self.outputs) == 0:
-            self.outputs.append(VarNode(owner_opr=self, name=self.name))
-        self.outputs[0].var = outputs
+        if (
+            self._opr is None
+            or self._opr.graph != graph
+            or self._opr.outputs[0].comp_node != self.device
+            or self._opr.outputs[0].shape != self.shape
+            or self._opr.outputs[0].dtype != self.dtype
+        ):
+            outputs = rt.make_h2d(graph, self.device, self.dtype, self.shape, self.name)
+            self._opr = outputs.owner
+            if len(self.outputs) == 0:
+                self.outputs.append(VarNode(owner_opr=self, name=self.name))
+            self.outputs[0].var = outputs
         assert self.outputs[0].owner is self
 
 
-class ImmutableTensor(OpNode):
-    type = "ImmutableTensor"
+class ConstOpBase(OpNode):
+    type = "ConstOpBase"
 
     def __init__(self, data=None, name=None, device=None, graph=None):
+        assert type(self) is not ConstOpBase, "ConstOpBase cannot be instantiated"
         super().__init__()
         self.name = name
         self.outputs = []
@@ -214,7 +257,7 @@ class ImmutableTensor(OpNode):
         return self._opr.outputs[0].dtype if self._opr else None
 
     def numpy(self):
-        return self._opr.outputs[0].value if self._opr else None
+        return self.outputs[0].numpy()
 
     def set_value(self, data, device=None):
         assert self.graph is not None
@@ -226,7 +269,7 @@ class ImmutableTensor(OpNode):
             data = data.astype(np.float32)
         elif data.dtype == np.int64:
             data = data.astype(np.int32)
-        varnode = rt.make_const(self.graph, data, cn, data.dtype, self.name)
+        varnode = type(self).rt_fun(self.graph, data, cn, data.dtype, self.name)
         if len(self.outputs) == 0:
             self.outputs.append(VarNode(owner_opr=self, name=self.name))
         self.outputs[0].var = varnode
@@ -249,6 +292,16 @@ class ImmutableTensor(OpNode):
             self.set_value(self.numpy())
         if self.name is not None:
             self.outputs[0].var.name = self.name
+
+
+class ImmutableTensor(ConstOpBase):
+    type = "ImmutableTensor"
+    rt_fun = rt.make_const
+
+
+class SharedDeviceTensor(ConstOpBase):
+    type = "SharedDeviceTensor"
+    rt_fun = rt.make_shared
 
 
 class ReadOnlyOpNode(OpNode):

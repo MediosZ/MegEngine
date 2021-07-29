@@ -8,12 +8,15 @@
 # "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 import functools
 import multiprocessing as mp
+import os
 import queue
 
-from ..core._imperative_rt.core2 import sync
+from .. import _exit
+from ..core._imperative_rt.core2 import full_sync
+from ..device import get_device_count
 from ..logger import get_logger
-from .group import group_barrier, init_process_group
-from .helper import get_device_count_by_fork
+from .group import _set_machine_ranks, group_barrier, init_process_group
+from .helper import _check_device_initialized
 from .server import Client, Server
 
 WARN_SUBPROCESS_EXIT_WITHOUT_RETURN = (
@@ -29,21 +32,35 @@ def _run_wrapped(
     world_size,
     rank,
     dev,
+    device_type,
     args,
     kwargs,
+    backend,
     queue: mp.Queue,
+    machine_ranks: list,
 ):
     """Init distributed process group and run wrapped function."""
+    _check_device_initialized(device_type, dev)
     init_process_group(
-        master_ip=master_ip, port=port, world_size=world_size, rank=rank, device=dev
+        master_ip=master_ip,
+        port=port,
+        world_size=world_size,
+        rank=rank,
+        device=dev,
+        backend=backend,
+        device_type=device_type,
     )
+    # set NCCL_LAUNCH_MODE to avoid deadlock
+    os.environ["NCCL_LAUNCH_MODE"] = "PARALLEL"
+    _set_machine_ranks(machine_ranks)
     if is_multimachine:
         group_barrier()
     ret = func(*args, **kwargs)
     queue.put((dev, ret))
-    sync()
+    full_sync()
     if is_multimachine:
         group_barrier()
+    _exit(0)
 
 
 class launcher:
@@ -55,6 +72,7 @@ class launcher:
     :param rank_start: start number for rank.
     :param master_ip: ip address for master node (where the rank 0 is).
     :param port: server port for distributed server.
+    :param backend: set default collective communication backend.
     """
 
     def __new__(cls, *args, **kwargs):
@@ -70,13 +88,17 @@ class launcher:
         rank_start=0,
         master_ip="localhost",
         port=0,
+        device_type="xpu",
+        backend="nccl",
     ):
         self.func = func
-        self.n_gpus = n_gpus if n_gpus is not None else get_device_count_by_fork("gpu")
+        self.n_gpus = n_gpus if n_gpus is not None else get_device_count(device_type)
         self.world_size = world_size if world_size is not None else self.n_gpus
         self.rank_start = rank_start
         self.master_ip = master_ip
         self.port = port
+        self.device_type = device_type
+        self.backend = backend
         # master node create server
         if self.rank_start == 0:
             self.server = Server(self.port)
@@ -88,6 +110,7 @@ class launcher:
         procs = []
         queue = mp.Queue(self.n_gpus)
         results = [None] * self.n_gpus
+        machine_ranks = [i + self.rank_start for i in range(self.n_gpus)]
         for dev in range(self.n_gpus):
             p = mp.Process(
                 target=_run_wrapped,
@@ -99,9 +122,12 @@ class launcher:
                     self.world_size,
                     dev + self.rank_start,
                     dev,
+                    self.device_type,
                     args,
                     kwargs,
+                    self.backend,
                     queue,
+                    machine_ranks,
                 ),
             )
             p.start()
@@ -114,6 +140,7 @@ class launcher:
                 procs[dev].terminate()
             devs.clear()
 
+        result_count = 0
         while len(devs) > 0:
             left = []
             # check all processes in one second
@@ -129,11 +156,21 @@ class launcher:
                 ), "subprocess {} exit with code {}".format(dev + self.rank_start, code)
                 if code == None:
                     left.append(dev)
-                elif queue.empty():
-                    get_logger().warning(WARN_SUBPROCESS_EXIT_WITHOUT_RETURN)
-                else:
+
+                # DO NOT delete it, multiprocess.Queue has small buffer
+                # fetch data early to avoid dead lock
+                if not queue.empty():
+                    result_count += 1
                     dev, ret = queue.get_nowait()
                     results[dev] = ret
             devs = left
+
+        while not queue.empty():
+            result_count += 1
+            dev, ret = queue.get_nowait()
+            results[dev] = ret
+
+        if result_count < self.n_gpus:
+            get_logger().warning(WARN_SUBPROCESS_EXIT_WITHOUT_RETURN)
 
         return results

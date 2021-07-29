@@ -9,13 +9,17 @@
 import itertools
 
 import numpy as np
-import pytest
 
 import megengine as mge
 import megengine.autodiff as ad
 import megengine.functional as F
 from megengine import Tensor
-from megengine.core._imperative_rt.core2 import _set_drop_flag, _set_swap_flag
+from megengine.core._imperative_rt.core2 import (
+    _set_drop_flag,
+    _set_swap_flag,
+    get_option,
+    set_option,
+)
 from megengine.module import Linear, Module
 from megengine.optimizer import SGD
 
@@ -79,7 +83,8 @@ class XORNet(Module):
 def test_training_converge_with_swap_and_drop():
     _set_swap_flag(True)
     _set_drop_flag(True)
-
+    old_buffer_length = get_option("buffer_length")
+    set_option("buffer_length", 0)
     net = XORNet()
     opt = SGD(net.parameters(), lr=0.01, momentum=0.9, weight_decay=5e-4)
     gm = ad.GradManager().attach(net.parameters())
@@ -112,13 +117,14 @@ def test_training_converge_with_swap_and_drop():
     xx, yy = np.meshgrid(x, x)
     xx = xx.reshape((ngrid * ngrid, 1))
     yy = yy.reshape((ngrid * ngrid, 1))
-    data = np.concatenate((xx, yy), axis=1).astype(np.float32)
+    data = mge.tensor(np.concatenate((xx, yy), axis=1).astype(np.float32))
 
     pred = infer(Tensor(data)).numpy()
-    precision = calculate_precision(data, pred)
+    precision = calculate_precision(data.numpy(), pred)
     assert precision == 1.0, "Test precision must be high enough, get {}".format(
         precision
     )
 
     _set_swap_flag(False)
     _set_drop_flag(False)
+    set_option("buffer_length", old_buffer_length)

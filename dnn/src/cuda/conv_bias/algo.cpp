@@ -84,6 +84,18 @@ ConvBiasForwardImpl::AlgoPack::AlgoPack() {
     for (auto&& algo : int8_nchw32_imma) {
         all_algos.push_back(&algo);
     }
+    for (auto&& algo : int4_int4_nchw64_imma) {
+        all_algos.push_back(&algo);
+    }
+    for (auto&& algo : uint4_int4_nchw64_imma) {
+        all_algos.push_back(&algo);
+    }
+    for (auto&& algo : int4_int4_nhwc_imma) {
+        all_algos.push_back(&algo);
+    }
+    for (auto&& algo : uint4_int4_nhwc_imma) {
+        all_algos.push_back(&algo);
+    }
 #endif
 #endif
     fill_dp4a_algos();
@@ -110,8 +122,9 @@ ConvBiasForwardImpl::AlgoBase::SizeArgs::SizeArgs(
         const TensorLayout& filter, const TensorLayout& bias,
         const TensorLayout& z, const TensorLayout& dst,
         const PreprocessedFilter* preprocessed_filter)
-        : SizeArgs(o, src, filter, o->check_layout_fwd(src, filter, dst), bias,
-                   z, dst, preprocessed_filter) {}
+        : SizeArgs(o, src, filter,
+                   o->make_canonized_filter_meta(src.ndim, filter), bias, z,
+                   dst, preprocessed_filter) {}
 
 ConvBiasForwardImpl::AlgoBase::SizeArgs::SizeArgs(
         ConvBiasForwardImpl* o, const TensorLayout& src,
@@ -164,15 +177,14 @@ std::string ConvBiasForwardImpl::AlgoBase::SizeArgs::to_string() const {
             megdnn_throw("invalid conv bias nonlinear mode");
     }
     return ssprintf(
-            "src=%s, filter=%u{%u,%u,%u,%u}, bias=%s, z=%s, dst=%s, "
+            "src=%s, filter=%s, bias=%s, z=%s, dst=%s, "
             "pad=%ux%u, stride=%ux%u, dilate=%ux%u, xcorr=%d, dtype=%s,%s, "
             "nonlinear_mode=%s",
-            src_layout->to_string().c_str(), fm.group, fm.ocpg, fm.icpg,
-            fm.spatial[0], fm.spatial[1], bias_layout->to_string().c_str(),
-            z_layout->to_string().c_str(), dst_layout->to_string().c_str(),
-            fm.padding[0], fm.padding[1], fm.stride[0], fm.stride[1],
-            fm.dilation[0], fm.dilation[1], !fm.should_flip,
-            src_layout->dtype.name(), dst_layout->dtype.name(),
+            src_layout->to_string().c_str(), filter_layout->to_string().c_str(),
+            bias_layout->to_string().c_str(), z_layout->to_string().c_str(),
+            dst_layout->to_string().c_str(), fm.padding[0], fm.padding[1],
+            fm.stride[0], fm.stride[1], fm.dilation[0], fm.dilation[1],
+            !fm.should_flip, src_layout->dtype.name(), dst_layout->dtype.name(),
             nonlinear_mode_str.c_str());
 }
 
@@ -225,6 +237,49 @@ void ConvBiasForwardImpl::AlgoPack::fill_imma_algos() {
         int8_nchw32_imma.emplace_back(AlgoParam{128, 64, 64, 64, 32, 64});
         int8_nchw32_imma.emplace_back(AlgoParam{64, 64, 64, 32, 32, 64});
         int8_nchw32_imma.emplace_back(AlgoParam{32, 64, 64, 32, 16, 64});
+    }
+
+    {
+        using AlgoParam = AlgoInt4Int4NCHW64IMMAImplicitGemm::AlgoParam;
+        int4_int4_nchw64_imma.emplace_back(
+                AlgoParam{128, 128, 128, 64, 64, 128});
+        int4_int4_nchw64_imma.emplace_back(
+                AlgoParam{256, 128, 128, 64, 64, 128});
+    }
+    {
+        using AlgoParam = AlgoUInt4Int4NCHW64IMMAImplicitGemm::AlgoParam;
+        uint4_int4_nchw64_imma.emplace_back(
+                AlgoParam{128, 128, 128, 64, 64, 128});
+        uint4_int4_nchw64_imma.emplace_back(
+                AlgoParam{256, 128, 128, 64, 64, 128});
+    }
+    {
+        using AlgoParam = AlgoInt4Int4NHWCIMMAImplicitGemm::AlgoParam;
+        int4_int4_nhwc_imma.emplace_back(
+                AlgoParam{128, 32, 64, 64, 32, 64, 32});
+        int4_int4_nhwc_imma.emplace_back(
+                AlgoParam{128, 32, 64, 64, 32, 64, 16});
+        int4_int4_nhwc_imma.emplace_back(AlgoParam{128, 32, 64, 64, 32, 64, 8});
+        int4_int4_nhwc_imma.emplace_back(
+                AlgoParam{128, 64, 64, 64, 64, 64, 32});
+        int4_int4_nhwc_imma.emplace_back(
+                AlgoParam{128, 64, 64, 64, 64, 64, 16});
+        int4_int4_nhwc_imma.emplace_back(AlgoParam{128, 64, 64, 64, 64, 64, 8});
+    }
+    {
+        using AlgoParam = AlgoUInt4Int4NHWCIMMAImplicitGemm::AlgoParam;
+        uint4_int4_nhwc_imma.emplace_back(
+                AlgoParam{128, 32, 64, 64, 32, 64, 32});
+        uint4_int4_nhwc_imma.emplace_back(
+                AlgoParam{128, 32, 64, 64, 32, 64, 16});
+        uint4_int4_nhwc_imma.emplace_back(
+                AlgoParam{128, 32, 64, 64, 32, 64, 8});
+        uint4_int4_nhwc_imma.emplace_back(
+                AlgoParam{128, 64, 64, 64, 64, 64, 32});
+        uint4_int4_nhwc_imma.emplace_back(
+                AlgoParam{128, 64, 64, 64, 64, 64, 16});
+        uint4_int4_nhwc_imma.emplace_back(
+                AlgoParam{128, 64, 64, 64, 64, 64, 8});
     }
 #endif
 }

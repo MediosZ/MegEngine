@@ -9,18 +9,19 @@
 import collections
 import fnmatch
 import itertools
+import pickle
 import re
 from collections import OrderedDict
-from typing import Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
-import numpy as np
-
-from ..core._imperative_rt import ComputingGraph
-from ..core._imperative_rt.core2 import SymbolVar
+from ..core import _imperative_rt
+from ..core._imperative_rt import ComputingGraph, SerializationMetadata
+from ..core._trace_option import set_symbolic_shape as _set_symbolic_shape
 from ..core.tensor import megbrain_graph as G
 from ..logger import get_logger
 from .comp_graph_tools import get_dep_vars, get_opr_type, get_oprs_seq
 from .network_node import (
+    ConstOpBase,
     Host2DeviceCopy,
     ImmutableTensor,
     NetworkNode,
@@ -38,9 +39,35 @@ class Network:
         self._orig_inputs = []
         self.output_vars = []  # output var of graph
         self._orig_outputs = []
-        self.all_oprs_map = OrderedDict()
-        self.all_vars_map = OrderedDict()
+        self.all_oprs_map = OrderedDict()  # _imperative_rt.graph.VarNode.id: VarNode
+        self.all_vars_map = (
+            OrderedDict()
+        )  # _imperative_rt.graph.OperatorNode.id: OpNode
         self.graph = ComputingGraph()
+        self._metadata = None
+
+    @property
+    def metadata(self):
+        r"""
+        Load metadata as a dict.
+        """
+        if not self._metadata.is_valid:
+            logger.info("metadata is not valid!")
+            return None
+        ret = dict()
+        try:
+            user_info = pickle.loads(self._metadata.user_info)
+        except:  # pylint: disable=bare-except
+            logger.warning(
+                "can't parse user info by pickle, so return the original bytes object!"
+            )
+            user_info = self._metadata.user_info
+        ret["user_info"] = user_info
+        ret["graph_modified"] = self._metadata.graph_modified
+        ret["optimized_for_inference"] = self._metadata.optimized_for_inference
+        if ret["optimized_for_inference"]:
+            ret.update(G.deserialize_infer_option(self._metadata.optimize_options))
+        return ret
 
     @classmethod
     def load(cls, model_path: str, outspec: List[str] = None):
@@ -50,7 +77,8 @@ class Network:
         :param outspec: only load the subgraph with outspec as its endpoints.
         """
         self = cls()
-        _, _, outputs = G.load_graph(model_path)
+        ret = G.load_graph(model_path)
+        outputs, self._metadata = ret.output_vars_list, ret.metadata
         if outspec is not None:
             output_spec = outspec.copy()
             all_vars = get_dep_vars(outputs) + outputs
@@ -77,7 +105,7 @@ class Network:
         self.all_oprs_map = {}
         self.all_vars_map = {}
         for opr in self.all_oprs:
-            if isinstance(opr, (ImmutableTensor, Host2DeviceCopy)):
+            if isinstance(opr, (ConstOpBase, Host2DeviceCopy)):
                 opr.compile(self.graph)
             else:
                 opr.compile()
@@ -124,6 +152,9 @@ class Network:
                 * enable_chwn4 --
                     whether to use CHWN4 data layout, currently
                     used in nvidia backend with tensorcore.
+                * enable_nchw64 --
+                    whether to use NCHW64 data layout, used for fast int4
+                    support on Nvidia GPU.
 
                 * enable_fuse_conv_bias_nonlinearity: whether to fuse conv+bias+nonlinearty
                     into one opr.
@@ -151,6 +182,8 @@ class Network:
         append_json=False,
         optimize_for_inference=True,
         append=False,
+        user_info: Any = None,
+        enable_metadata=True,
         **kwargs
     ):
         """
@@ -175,6 +208,8 @@ class Network:
             if set false, will rewrite strip_info_file
         :param optimize_for_inference: enbale optmizations,
             will skip all optimize options if this is False. Default: True
+        :param user_info: any type object, which will be pickled to bytes.
+        :param enable_metadata: whether to save metadata into output file.
 
         :Keyword Arguments:
 
@@ -182,8 +217,13 @@ class Network:
 
         """
 
+        def _set_var_name(var):
+            graph_var = G.VarNode(var.var)
+            graph_var.name = var.name
+            return graph_var
+
         self._compile()
-        out = [G.VarNode(var.var) for var in self.output_vars]
+        out = list(map(_set_var_name, self.output_vars))
 
         if kwargs.pop("arg_names", False):
             logger.warning(
@@ -195,8 +235,17 @@ class Network:
             )
 
         if optimize_for_inference:
-            out = G.optimize_for_inference(out, **kwargs)
+            out, optimize_options = G.optimize_for_inference(out, **kwargs)
 
+        metadata = SerializationMetadata()
+        if enable_metadata:
+            metadata.is_valid = True
+            metadata.graph_modified = True
+            metadata.user_info = pickle.dumps(user_info)
+            if optimize_for_inference:
+                metadata.optimize_options = optimize_options
+
+        G.set_priority_to_id([o._node if isinstance(o, G.VarNode) else o for o in out])
         dump_content, _ = G.dump_graph(
             out,
             keep_var_name=keep_var_name,
@@ -205,6 +254,7 @@ class Network:
             keep_opr_priority=keep_opr_priority,
             strip_info_file=strip_info_file,
             append_json=append_json,
+            metadata=metadata,
         )
         if isinstance(file, str):
             permission = "wb" if append == False else "ab"
@@ -231,19 +281,27 @@ class Network:
         if not all([var.owner for var in vars]):
             self.add_dep_oprs(*vars)
         for var in vars:
-            if var not in self.output_vars:
+            # use method 'is' instead of 'in' to avoid
+            # compare VarNode use elemwise equal
+            if not any(var is _ for _ in self.output_vars):
                 self.output_vars.append(var)
 
     def remove_output(self, *vars: VarNode):
         """Removes vars from the network output node list.
         """
         for var in vars:
-            if var in self.output_vars:
-                self.output_vars.remove(var)
+            # use list pop instead of remove to avoid
+            # compare VarNode use elemwise equal
+            for idx, out_var in enumerate(self.output_vars):
+                if var is out_var:
+                    self.output_vars.pop(idx)
 
     def add_dep_oprs(self, *vars):
         if len(vars) == 0:
             vars = self.output_vars
+
+        assert all(isinstance(var, VarNode) for var in vars), "Only support add VarNode"
+
         q = list(vars)
         while len(q) > 0:
             cur = q.pop(0)
@@ -303,7 +361,7 @@ class Network:
                     )
                 shp[0] = batchsize
                 i.shape = tuple(shp)
-
+        self._compile()
         assert prev_batchsize is not None, "no data provider found"
         assert not blacklist, "unused items in blacklist: {}".format(blacklist)
 
@@ -313,16 +371,19 @@ class Network:
         :param repl_dict: the map {old_var: new_var} that specifies how to replace the vars.
         """
         if not all([var.owner for var in repl_dict.values()]):
-            print(repl_dict.values())
             self.add_dep_oprs(*list(repl_dict.values()))
         for var in self.all_vars:
             if var in repl_dict:
                 repl_var = repl_dict[var]
-                owner = repl_var.owner
-                idx = owner.outputs.index(repl_var)
-                owner.outputs[idx] = var
-                var.__dict__.update(repl_var.__dict__)
-                var.var = repl_var.var
+                if repl_var is var:
+                    continue
+                for opnode in var.users:
+                    assert var in opnode.inputs
+                    opnode.inputs = [repl_var if var is i else i for i in opnode.inputs]
+                    if opnode not in repl_var.users:
+                        repl_var.users.append(opnode)
+                var.users.clear()
+        self._compile()
 
     def replace_oprs(self, repl_dict: Dict[OpNode, OpNode]):
         """
@@ -334,11 +395,11 @@ class Network:
                 assert len(opr.outputs) == len(
                     repl_dict[opr].outputs
                 ), "can not replace {} with {}".format(type(opr), type(repl_dict[opr]))
-                repl_dict[opr].outputs = opr.outputs
                 for ind, var in enumerate(opr.outputs):
                     var.owner = repl_dict[opr]
                     var.__dict__.update(repl_dict[opr].outputs[ind].__dict__)
                     var.var = repl_dict[opr].outputs[ind].var
+        self._compile()
 
     def get_opr_by_type(self, oprcls, unique=True):
         assert issubclass(oprcls, OpNode)
@@ -422,18 +483,33 @@ class Network:
     def all_oprs_dict(self):
         return self.opr_filter.as_dict()
 
-    # used for loading and building graph
-    def _add_opr(self, opr):
+    def _add_opr(self, opr) -> Optional[OpNode]:
+        """
+        Used for loading and building graph.
+        """
+        assert isinstance(opr, _imperative_rt.graph.OperatorNode)
+
         # TODO: use megbrain C++ RTTI to replace type string
         if opr.id not in self.all_oprs_map:
             opnode = str_to_mge_class(get_opr_type(opr)).load(opr)
             self.all_oprs_map[opr.id] = opnode
             for var in opr.inputs:
-                opnode.add_inp_var(self._get_var(var))
+                varnode = self._get_var(var)
+                opnode.add_inp_var(varnode)
+                varnode.users.append(opnode)
             for var in opr.outputs:
                 opnode.add_out_var(self._get_var(var))
             return opnode
         else:
+            # overwrite the opnode 'new' output VarNode with
+            # original one when output number larger than 1,
+            # or will cause dependence issue in _compiler step.
+            if len(opr.outputs) > 1:
+                opnode = self.all_oprs_map[opr.id]
+                for idx, output in enumerate(opnode.outputs):
+                    if output.var.id in self.all_vars_map:
+                        opnode.outputs[idx] = self.all_vars_map[output.var.id]
+
             return None
 
     def _get_opr(self, x):
@@ -443,10 +519,22 @@ class Network:
             return None
 
     def _get_var(self, x):
-        # auto convert to VarNode of Network
+        """
+        Convert :class:`~._imperative_rt.graph.VarNode` to :class:`~.VarNode`.
+        """
+        assert isinstance(x, _imperative_rt.graph.VarNode)
         if x.id not in self.all_vars_map or self.all_vars_map[x.id].var != x:
             self.all_vars_map[x.id] = VarNode.load(x, self._get_opr(x.owner))
         return self.all_vars_map[x.id]
+
+
+def set_symbolic_shape(option: bool):
+    """
+    Set the VarNode use symbolic shape or not, return the last status.
+    Please set to True and must recover after dump if want to change the input batch size.
+    :param option: True for enable symbolic shape.
+    """
+    return _set_symbolic_shape(option)
 
 
 def as_varnode(obj):

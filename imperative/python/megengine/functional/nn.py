@@ -10,14 +10,18 @@
 from typing import Optional, Sequence, Tuple, Union
 
 from ..core._imperative_rt.core2 import apply
-from ..core._imperative_rt.graph import VarNode
-from ..core._trace_option import use_symbolic_shape
 from ..core.ops import builtin
 from ..core.ops.builtin import BatchNorm, Elemwise
 from ..core.ops.special import Const
-from ..core.tensor import megbrain_graph, utils
+from ..core.tensor import amp, megbrain_graph
 from ..core.tensor.array_method import _elwise_apply
-from ..core.tensor.utils import astensor1d, astype, setscalar
+from ..core.tensor.utils import (
+    astensor1d,
+    astype,
+    cast_tensors,
+    convert_single_value,
+    setscalar,
+)
 from ..device import get_default_device
 from ..distributed import WORLD, is_distributed
 from ..random import uniform
@@ -26,18 +30,9 @@ from ..utils.deprecation import deprecated_func
 from ..utils.tuple_function import _pair, _pair_nonzero, _triple, _triple_nonzero
 from .debug_param import get_execution_strategy
 from .distributed import all_reduce_sum
-from .elemwise import _elwise, exp, floor, log, log1p, maximum, minimum
-from .math import argsort, matmul, max, prod, sum
-from .tensor import (
-    broadcast_to,
-    concat,
-    expand_dims,
-    full,
-    ones,
-    reshape,
-    squeeze,
-    zeros,
-)
+from .elemwise import _elwise, exp, log, log1p, maximum, minimum
+from .math import matmul, max, sum
+from .tensor import broadcast_to, concat, expand_dims, ones, squeeze, zeros
 
 __all__ = [
     "adaptive_avg_pool2d",
@@ -48,10 +43,12 @@ __all__ = [
     "conv2d",
     "conv3d",
     "conv_transpose2d",
+    "conv_transpose3d",
     "deformable_conv2d",
     "deformable_psroi_pooling",
     "dropout",
     "embedding",
+    "gelu",
     "hsigmoid",
     "hswish",
     "indexing_one_hot",
@@ -69,6 +66,9 @@ __all__ = [
     "remap",
     "resize",
     "sigmoid",
+    "sliding_window",
+    "sliding_window_transpose",
+    "silu",
     "softmax",
     "softplus",
     "sync_batch_norm",
@@ -88,7 +88,9 @@ def expand_hw(x):
     return int(h), int(w)
 
 
-def linear(inp: Tensor, weight: Tensor, bias: Optional[Tensor] = None) -> Tensor:
+def linear(
+    inp: Tensor, weight: Tensor, bias: Optional[Tensor] = None, compute_mode="default",
+) -> Tensor:
     """
     Applies a linear transformation to the input tensor.
 
@@ -99,8 +101,10 @@ def linear(inp: Tensor, weight: Tensor, bias: Optional[Tensor] = None) -> Tensor
     :param bias: bias with shape `(out_features,)`.
         Default: None
     """
-    ret = matmul(inp, weight, transpose_b=True)
+    ret = matmul(inp, weight, transpose_b=True, compute_mode=compute_mode)
     if bias is not None:
+        if amp._enabled:
+            bias = bias.astype("float16")
         ret += bias
     return ret
 
@@ -121,7 +125,7 @@ def conv1d(
     Refer to :class:`~.Conv1d` for more information.
 
     :param inp: The feature map of the convolution operation
-    :param weight: The convolution kernel
+    :param weight: The convolution kernel.
     :param bias: The bias added to the result of convolution (if given)
     :param stride: Stride of the 1D convolution operation. Default: 1
     :param padding: Size of the paddings added to the input on both sides of its
@@ -131,7 +135,7 @@ def conv1d(
         so as to perform a "grouped convolution". When ``groups`` is not 1,
         ``in_channels`` and ``out_channels`` must be divisible by ``groups``,
         and the shape of weight should be ``(groups, out_channel // groups,
-        in_channels // groups, height, width)``.
+        in_channels // groups, kernel_size)``. Default: 1
     :type conv_mode: string or :class:`mgb.opr_param_defs.Convolution.Mode`
     :param conv_mode: Supports 'cross_correlation'. Default:
         'cross_correlation'.
@@ -150,6 +154,9 @@ def conv1d(
     assert compute_mode.lower() == "default" or compute_mode.name == "DEFAULT"
     assert inp.ndim == 3, "the input dimension of conv1d should be 3"
     assert weight.ndim == 3, "the weight dimension of conv1d should be 3"
+    if amp._enabled:
+        compute_mode = "float32"
+        inp, weight, bias = cast_tensors(inp, weight, bias)
 
     inp = expand_dims(inp, 3)
     weight = expand_dims(weight, 3)
@@ -174,7 +181,6 @@ def conv1d(
         compute_mode=compute_mode,
         sparse=sparse_type,
     )
-    inp, weight = utils.convert_inputs(inp, weight)
     (output,) = apply(op, inp, weight)
     if bias is not None:
         output += bias
@@ -208,8 +214,8 @@ def conv2d(
     :param groups: number of groups into which the input and output channels are divided, 
         so as to perform a ``grouped convolution``. When ``groups`` is not 1,
         ``in_channels`` and ``out_channels`` must be divisible by ``groups``,
-        and the shape of weight should be `(groups, out_channel // groups,
-        in_channels // groups, height, width)`.
+        and the shape of weight should be ``(groups, out_channel // groups,
+        in_channels // groups, height, width)``. Default: 1
     :type conv_mode: string or :class:`Convolution.Mode`
     :param conv_mode: supports "cross_correlation". Default:
         "cross_correlation"
@@ -225,7 +231,9 @@ def conv2d(
         conv_mode.lower() == "cross_correlation"
         or conv_mode.name == "CROSS_CORRELATION"
     )
-    assert compute_mode.lower() == "default" or compute_mode.name == "DEFAULT"
+    if amp._enabled:
+        compute_mode = "float32"
+        inp, weight, bias = cast_tensors(inp, weight, bias)
 
     stride_h, stride_w = expand_hw(stride)
     pad_h, pad_w = expand_hw(padding)
@@ -244,7 +252,6 @@ def conv2d(
         compute_mode=compute_mode,
         sparse=sparse_type,
     )
-    inp, weight = utils.convert_inputs(inp, weight)
     (output,) = apply(op, inp, weight)
     if bias is not None:
         output += bias
@@ -276,8 +283,8 @@ def conv3d(
     :param groups: number of groups into which the input and output channels are divided,
         so as to perform a ``grouped convolution``. When ``groups`` is not 1,
         ``in_channels`` and ``out_channels`` must be divisible by ``groups``,
-        and the shape of weight should be `(groups, out_channel // groups,
-        in_channels // groups, t, height, width)`.
+        and the shape of weight should be ``(groups, out_channel // groups,
+        in_channels // groups, depth, height, width)``. Default: 1
     :param conv_mode: supports "cross_correlation". Default:
         "cross_correlation"
     :return: output tensor.
@@ -305,7 +312,6 @@ def conv3d(
         mode=conv_mode,
         sparse=sparse_type,
     )
-    inp, weight = utils.convert_inputs(inp, weight)
     (output,) = apply(op, inp, weight)
     if bias is not None:
         output += bias
@@ -338,8 +344,8 @@ def conv_transpose2d(
     :param groups: number of groups into which the input and output channels are divided, 
         so as to perform a ``grouped convolution``. When ``groups`` is not 1,
         ``in_channels`` and ``out_channels`` must be divisible by groups,
-        and the shape of weight should be `(groups, out_channel // groups,
-        in_channels // groups, height, width)`. Default: 1
+        and the shape of weight should be ``(groups, in_channels // groups,
+        out_channels // groups, height, width)``. Default: 1
     :type conv_mode: string or :class:`Convolution.Mode`
     :param conv_mode: supports "cross_correlation". Default:
         "cross_correlation"
@@ -355,7 +361,9 @@ def conv_transpose2d(
         conv_mode.lower() == "cross_correlation"
         or conv_mode.name == "CROSS_CORRELATION"
     )
-    assert compute_mode.lower() == "default" or compute_mode.name == "DEFAULT"
+    if amp._enabled:
+        compute_mode = "float32"
+        inp, weight, bias = cast_tensors(inp, weight, bias)
 
     if groups != 1:
         raise NotImplementedError("group transposed conv2d is not supported yet.")
@@ -372,8 +380,8 @@ def conv_transpose2d(
         dilate_h=dilate_h,
         dilate_w=dilate_w,
         strategy=get_execution_strategy(),
+        compute_mode=compute_mode,
     )
-    weight, inp = utils.convert_inputs(weight, inp)
     (output,) = apply(op, weight, inp)
     if bias is not None:
         output += bias
@@ -408,8 +416,8 @@ def deformable_conv2d(
     :param groups: number of groups into which the input and output channels are divided, 
         so as to perform a ``grouped convolution``. When ``groups`` is not 1,
         ``in_channels`` and ``out_channels`` must be divisible by groups,
-        and the shape of weight should be `(groups, out_channel // groups,
-        in_channels // groups, height, width)`. Default: 1
+        and the shape of weight should be ``(groups, out_channel // groups,
+        in_channels // groups, height, width)``. Default: 1
     :type conv_mode: string or :class:`Convolution.Mode`
     :param conv_mode: supports "cross_correlation". Default:
         "cross_correlation"
@@ -425,7 +433,12 @@ def deformable_conv2d(
         conv_mode.lower() == "cross_correlation"
         or conv_mode.name == "CROSS_CORRELATION"
     )
-    assert compute_mode.lower() == "default" or compute_mode.name == "DEFAULT"
+    if amp._enabled:
+        compute_mode = "float32"
+        inp, weight, offset, mask, bias = cast_tensors(inp, weight, offset, mask, bias)
+    else:
+        offset = offset.astype("float32")
+        mask = mask.astype("float32")
 
     stride_h, stride_w = expand_hw(stride)
     pad_h, pad_w = expand_hw(padding)
@@ -444,7 +457,6 @@ def deformable_conv2d(
         compute_mode=compute_mode,
         sparse=sparse_type,
     )
-    inp, weight, offset, mask = utils.convert_inputs(inp, weight, offset, mask)
     (output,) = apply(op, inp, weight, offset, mask)
     if bias is not None:
         output += bias
@@ -478,11 +490,56 @@ def local_conv2d(
         dilate_h=dilate_h,
         dilate_w=dilate_w,
         mode=conv_mode,
-        compute_mode="default",
         sparse="dense",
     )
-    inp, weight = utils.convert_inputs(inp, weight)
     (output,) = apply(op, inp, weight)
+    if bias is not None:
+        output += bias
+    return output
+
+
+def conv_transpose3d(
+    inp: Tensor,
+    weight: Tensor,
+    bias: Optional[Tensor] = None,
+    stride: Union[int, Tuple[int, int, int]] = 1,
+    padding: Union[int, Tuple[int, int, int]] = 0,
+    dilation: Union[int, Tuple[int, int, int]] = 1,
+) -> Tensor:
+    """
+    3D transposed convolution operation. Only support the case that groups = 1 
+    and conv_mode = "cross_correlation".
+
+    Refer to :class:`~.ConvTranspose3d` for more information.
+
+    :param inp: feature map of the convolution operation.
+    :param weight: convolution kernel.
+        weight usually has shape ``(in_channels, out_channels, depth, height, width)``.
+    :param bias: bias added to the result of convolution (if given).
+    :param stride: stride of the 3D convolution operation. Default: 1
+    :param padding: size of the paddings added to the input on all sides of its
+        spatial dimensions. Only zero-padding is supported. Default: 0
+    :param dilation: dilation of the 3D convolution operation. Default: 1
+    :return: output tensor.
+    """
+    D, H, W = 0, 1, 2
+    pad = _triple(padding)
+    stride = _triple_nonzero(stride)
+    dilate = _triple_nonzero(dilation)
+
+    op = builtin.Convolution3DBackwardData(
+        pad_d=pad[D],
+        pad_h=pad[H],
+        pad_w=pad[W],
+        stride_d=stride[D],
+        stride_h=stride[H],
+        stride_w=stride[W],
+        dilate_d=dilate[D],
+        dilate_h=dilate[H],
+        dilate_w=dilate[W],
+        strategy=get_execution_strategy(),
+    )
+    (output,) = apply(op, weight, inp)
     if bias is not None:
         output += bias
     return output
@@ -709,6 +766,25 @@ def leaky_relu(inp: Tensor, negative_slope: float = 0.01) -> Tensor:
     Refer to :class:`~.LeakyReLU` for more information.
     """
     return maximum(inp, 0) + negative_slope * minimum(inp, 0)
+
+
+def silu(x):
+    r"""
+    Applies the element-wise Sigmoid Linear Unit function, i.e. `x * sigmoid(x)`.
+    """
+    return _elwise(x, mode=Elemwise.Mode.SILU)
+
+
+def gelu(x):
+    r"""
+    Applies the element-wise function:
+
+    .. math::
+        \text{gelu}(x) = x\Phi(x)
+
+    where :math:`\Phi(x)` is the Cumulative Distribution Function for Gaussian Distribution.
+    """
+    return _elwise(x, mode=Elemwise.Mode.GELU)
 
 
 def softplus(inp: Tensor) -> Tensor:
@@ -942,7 +1018,8 @@ def batch_norm(
     training: bool = False,
     momentum: float = 0.9,
     eps: float = 1e-5,
-    inplace: bool = True
+    inplace: bool = True,
+    compute_mode="default"
 ):
     r"""
     Applies batch normalization to the input.
@@ -975,15 +1052,11 @@ def batch_norm(
     def make_full_if_none(x, value):
         if x is None:
             (x,) = Const(value, dtype=inp.dtype, device=inp.device)()
-            shape = utils.astensor1d(
-                (1, C, 1, 1), inp, dtype="int32", device=inp.device
-            )
+            shape = astensor1d((1, C, 1, 1), inp, dtype="int32", device=inp.device)
             (result,) = apply(builtin.Broadcast(), x, shape)
             return result
         elif x.ndim == 1:
-            shape = utils.astensor1d(
-                (1, C, 1, 1), inp, dtype="int32", device=inp.device
-            )
+            shape = astensor1d((1, C, 1, 1), inp, dtype="int32", device=inp.device)
             (result,) = apply(builtin.Reshape(), x, shape)
             return result
         return x
@@ -1000,10 +1073,11 @@ def batch_norm(
     if has_var and running_var.ndim != 4:
         raise ValueError
 
-    inp, weight, bias, running_mean, running_var = utils.convert_inputs(
-        inp, weight, bias, running_mean, running_var
-    )
-
+    if amp._enabled:
+        inp = inp.astype("float16")
+        weight, bias, running_mean, running_var = cast_tensors(
+            weight, bias, running_mean, running_var, promote=True
+        )
     weight = make_full_if_none(weight, 1)
     bias = make_full_if_none(bias, 0)
 
@@ -1074,6 +1148,10 @@ def sync_batch_norm(
         Default: 0.9
     :param eps: a value added to the denominator for numerical stability.
         Default: 1e-5
+    :param eps_mode: mode of calculation for eps, "max" or "additive".
+        Default: "additive"
+    :param group: communication group, caculate mean and variance between this group.
+        Default: :obj:`~megengine.distributed.WORLD`
     :return: output tensor.
     """
     assert eps_mode.lower() in {"max", "additive"}, "unknown eps_mode: {}".format(
@@ -1296,11 +1374,103 @@ def indexing_one_hot(
     """
     assert isinstance(src, Tensor), "src must be of Tensor type"
     op = builtin.IndexingOneHot(axis=axis)
-    index = utils.convert_single_value(index, dtype="int32", device=src.device)
+    index = convert_single_value(index, dtype="int32", device=src.device)
     (result,) = apply(op, src, index)
     if not keepdims:
         result = squeeze(result, axis)
     return result
+
+
+def sliding_window(
+    inp: Tensor,
+    kernel_size: Union[int, Tuple[int, int]],
+    padding: Union[int, Tuple[int, int]] = 0,
+    stride: Union[int, Tuple[int, int]] = 1,
+    dilation: Union[int, Tuple[int, int]] = 1,
+) -> Tensor:
+    """
+    Extracts sliding local blocks from a batched input tensor.
+
+    Refer to :class:`~.SlidingWindow` for more information.
+
+    :param inp: input tensor.
+    :param kernel_size: size of the window.
+    :param padding: implicit zero padding added on both sides of input. Default: 0
+    :param stride: stride of the window. Default: 1
+    :param dilation: dilation of the window. Default: 1
+    :return: output tensor.
+    """
+    padding_h, padding_w = _pair(padding)
+    stride_h, stride_w = _pair_nonzero(stride)
+    dilation_h, dilation_w = _pair_nonzero(dilation)
+    window_h, window_w = _pair_nonzero(kernel_size)
+
+    op = builtin.Images2Neibs(
+        pad_h=padding_h,
+        pad_w=padding_w,
+        stride_h=stride_h,
+        stride_w=stride_w,
+        dilate_h=dilation_h,
+        dilate_w=dilation_w,
+        window_h=window_h,
+        window_w=window_w,
+    )
+    (output,) = apply(op, inp)
+    return output
+
+
+def sliding_window_transpose(
+    inp: Tensor,
+    output_size: Union[int, Tuple[int, int]],
+    kernel_size: Union[int, Tuple[int, int]],
+    padding: Union[int, Tuple[int, int]] = 0,
+    stride: Union[int, Tuple[int, int]] = 1,
+    dilation: Union[int, Tuple[int, int]] = 1,
+) -> Tensor:
+    """
+    Sum over the sliding windows on the corresponding input location.
+
+    Refer to :class:`~.SlidingWindowTranspose` for more information.
+
+    :param inp: input tensor.
+    :param output_size: shape of output tensor.
+    :param kernel_size: size of the window.
+    :param padding: implicit zero padding added on both sides of input. Default: 0
+    :param stride: stride of the window. Default: 1
+    :param dilation: dilation of the window. Default: 1
+    :return: output tensor.
+    """
+    output_h, output_w = _pair_nonzero(output_size)
+    padding_h, padding_w = _pair(padding)
+    stride_h, stride_w = _pair_nonzero(stride)
+    dilation_h, dilation_w = _pair_nonzero(dilation)
+    window_h, window_w = _pair_nonzero(kernel_size)
+
+    expected_h = (
+        output_h + 2 * padding_h - dilation_h * (window_h - 1) - 1
+    ) // stride_h + 1
+    expected_w = (
+        output_w + 2 * padding_w - dilation_w * (window_w - 1) - 1
+    ) // stride_w + 1
+    assert inp.ndim == 6, "the input dimension of sliding_window_transpose should be 6"
+    assert (
+        inp.shape[2] == expected_h and inp.shape[3] == expected_w
+    ), "the input shape and output size do not match"
+
+    op = builtin.SlidingWindowTranspose(
+        out_h=output_h,
+        out_w=output_w,
+        pad_h=padding_h,
+        pad_w=padding_w,
+        stride_h=stride_h,
+        stride_w=stride_w,
+        dilate_h=dilation_h,
+        dilate_w=dilation_w,
+        window_h=window_h,
+        window_w=window_w,
+    )
+    (output,) = apply(op, inp)
+    return output
 
 
 interpolate = deprecated_func("1.3", "megengine.functional.vision", "interpolate", True)
@@ -1314,6 +1484,5 @@ warp_affine = deprecated_func("1.3", "megengine.functional.vision", "warp_affine
 warp_perspective = deprecated_func(
     "1.3", "megengine.functional.vision", "warp_perspective", True
 )
-
-from .loss import *  # isort:skip
 from .quantized import conv_bias_activation  # isort:skip
+from .loss import *  # isort:skip

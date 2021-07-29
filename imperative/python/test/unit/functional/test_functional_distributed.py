@@ -16,7 +16,6 @@ import megengine.distributed as dist
 from megengine import Parameter, tensor
 from megengine.core._imperative_rt.core2 import sync
 from megengine.device import get_default_device, set_default_device
-from megengine.distributed.helper import get_device_count_by_fork
 from megengine.functional.distributed import (
     all_gather,
     all_reduce_max,
@@ -45,7 +44,7 @@ def test_reduce_sum(shape):
         if rank == 0:
             assert np.allclose(output.numpy(), expect[rank])
         else:
-            assert np.allclose(output.numpy(), 0)
+            assert output is None
 
     x = np.random.random_sample(shape).astype("float32")
     y = np.random.random_sample(shape).astype("float32")
@@ -180,7 +179,7 @@ def test_gather(shape):
         if rank == 0:
             assert np.allclose(output.numpy(), expect[rank])
         else:
-            assert np.allclose(output.numpy(), 0)
+            assert output is None
 
     x = np.random.random_sample(shape).astype("float32")
     y = np.random.random_sample(shape).astype("float32")
@@ -236,13 +235,26 @@ def test_io_remote(shape):
     def worker(val, shape):
         rank = dist.get_rank()
         if rank == 0:  # remote send
-            x = tensor(val, device="gpu0")
+            x = tensor(val, device="xpu0")
             remote_send(x, 1)
             sync()
         else:  # remote recv
-            y = remote_recv(0, shape, np.float32)
-            assert y.device == "gpu1"
+            y = remote_recv(0)
+            assert y.device == get_default_device()
             np.testing.assert_almost_equal(val, y.numpy())
 
     val = np.random.random_sample(shape).astype("float32")
     worker(val, shape)
+
+
+@pytest.mark.require_ngpu(2)
+def test_cuda_init_before_fork():
+    a = mge.tensor(1, device="gpu0")
+
+    @dist.launcher(n_gpus=2)
+    def worker():
+        a += 1
+        b = mge.tensor(2)
+
+    with pytest.raises(AssertionError):
+        worker()
