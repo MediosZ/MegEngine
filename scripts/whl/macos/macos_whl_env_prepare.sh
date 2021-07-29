@@ -57,10 +57,8 @@ function install_python_package() {
         else
             env PYTHON_CONFIGURE_OPTS="--enable-shared" pyenv install ${pak}
         fi
-        echo "###### do command: /Users/${USER}/.pyenv/versions/${pak}/bin/python3 -m pip install numpy wheel requests tqdm tabulate"
-        /Users/${USER}/.pyenv/versions/${pak}/bin/python3 -m pip install numpy wheel
-        echo "###### do command: /Users/$USER/.pyenv/versions/${pak}/bin/python3 -m pip install -r ${SRC_DIR}/imperative/python/requires-test.txt"
-        /Users/$USER/.pyenv/versions/${pak}/bin/python3 -m pip install -r ${SRC_DIR}/imperative/python/requires-test.txt
+        echo "###### do command: /Users/$USER/.pyenv/versions/${pak}/bin/python3 -m pip install -r ${SRC_DIR}/imperative/python/requires.txt"
+        /Users/$USER/.pyenv/versions/${pak}/bin/python3 -m pip install -r ${SRC_DIR}/imperative/python/requires.txt
     done
 }
 
