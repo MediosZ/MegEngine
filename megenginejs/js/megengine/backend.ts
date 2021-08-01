@@ -1,6 +1,6 @@
 import { MegEngine, WasmFactoryConfig  } from "../../wasm-out/meg";
 import Generator from "../../wasm-out/meg.js";
-
+// import {wasmWorkerContents} from "../../wasm-out/meg.worker.js";
 export { MegEngine } from "../../wasm-out/meg";
 let wasmPath: string = null;
 

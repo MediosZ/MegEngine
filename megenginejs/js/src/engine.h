@@ -1,70 +1,22 @@
 #include "./webassembly.h"
 #include "./grad.h"
 #include "megbrain/imperative/ops/autogen.h"
+#include "megbrain/imperative/ops/rng.h"
 #include <vector>
 #include <unordered_map>
+#include <map>
 #include "./utils.h"
 
 using namespace mgb::imperative::interpreter;
 namespace mgb::imperative::js {
-
-class Engine{
-
-public:
-    Engine();
-    ~Engine();
-
-    static Engine& inst();
-
-    void startScope();
-    void endScope();
-    void attach(Tensor* t, CallbackFunc&& callback);
-    void backward(std::vector<Tensor*> tensors, std::vector<Tensor*> grads);
-
-    void insertTensor(int id, std::shared_ptr<Tensor> tensor){
-        tensor_registry->insert({id, tensor});
-    }
-
-    int registerTensor(std::shared_ptr<Tensor> tensor);
-
-    std::shared_ptr<Tensor> getTensor(int id){
-        return tensor_registry->at(id);
-    }
-
-    void disposeTensor(int id){
-        tensor_registry->erase(id);
-    }
-
-    void replaceTensor(int id, std::shared_ptr<Tensor> t){
-        tensor_registry->at(id) = t;
-    }
-
-
-private:
-    std::shared_ptr<GradKey> gradkey;
-    std::shared_ptr<std::unordered_map<int, std::shared_ptr<Tensor>>> tensor_registry;
-    bool inScope;
-    int nextTensorID = 0;
-
-};
-
 class EngineWrapper{
 public:
     EngineWrapper();
-
-    static EngineWrapper* Inst(){
-        if(_inst == NULL){
-            _inst = new EngineWrapper;
-        }
-        return _inst;
-    }
-
-    void startScope(){
-        _engine.startScope();
-    }
-    void endScope(){
-        _engine.endScope();
-    }
+    ~EngineWrapper();
+    void startScope();
+    void endScope();
+    void _attach(Tensor* t, CallbackFunc&& callback);
+    void _backward(std::vector<Tensor*> tensors, std::vector<Tensor*> grads);
     void attach(int32_t id);
     void backward(int32_t id);
 
@@ -79,10 +31,9 @@ public:
     int addAxis(int a, const emscripten::val &v);
     
     #endif
+    int _registerTensor(std::shared_ptr<Tensor> tensor);
     int registerTensor(std::shared_ptr<Tensor> t);
     int replaceTensor(int id, std::shared_ptr<Tensor> t);
-
-    
 
     int index_one_hot(int a, int index, int axis);
     #ifdef __EMSCRIPTEN__
@@ -93,21 +44,22 @@ public:
     TensorOffset getTensorOffset(const int id, int dtype);
     TensorOffset getGradOffset(const int id, int dtype);
     std::shared_ptr<Tensor> getTensor(int id){
-        return _engine.getTensor(id);
+        // mgb_log("about to get tensor %d, but size is %d", id, _tensor_registry.size());
+        return _tensor_registry.at(id);
     }
     std::shared_ptr<Tensor> getGrad(int id){
-        auto gradID = _tensor_wrapper_registry->at(id)->_grad;
+        auto gradID = _tensor_wrapper_registry.at(id)->_grad;
         return getTensor(gradID);
     }
     int getGradID(int id){
-        return _tensor_wrapper_registry->at(id)->_grad;
+        return _tensor_wrapper_registry.at(id)->_grad;
     }
     std::string getTensorShape(const int id);
     std::shared_ptr<TensorWrapper> getTensorWrapper(int id){
-        return _tensor_wrapper_registry->at(id);
+        return _tensor_wrapper_registry.at(id);
     }
     size_t size(){
-        return _tensor_wrapper_registry->size();
+        return _tensor_wrapper_registry.size();
     }
 
     void printTensor(int id);
@@ -135,8 +87,15 @@ public:
     int argmax(int a, int axis);
     
 private:
-    static EngineWrapper* _inst;
-    Engine _engine;
-    std::shared_ptr<std::unordered_map<int, std::shared_ptr<TensorWrapper>>> _tensor_wrapper_registry;
+    std::map<int, std::shared_ptr<TensorWrapper>> _tensor_wrapper_registry;
+    // originally in Engine
+    std::shared_ptr<GradKey> gradkey;
+    std::map<int, std::shared_ptr<Tensor>> _tensor_registry;
+    bool inScope;
+    int nextTensorID;
 };
+
+static EngineWrapper* _inst;
+EngineWrapper* EngineWrapperInst();
+
 };

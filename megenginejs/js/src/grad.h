@@ -12,6 +12,7 @@
 #pragma once
 
 #include "./tensor.h"
+#include "megbrain/imperative/ops/utility.h"
 
 #include <megbrain/utils/small_vector.h>
 #include <memory>
@@ -25,12 +26,19 @@ struct GradKey : std::enable_shared_from_this<GradKey>, NonCopyableObj {
     bool active = true;
     GradInfo::head_t free_vars_head;
     std::vector<std::weak_ptr<GradFn>> tape;
+    int priority = 0;
 
     ~GradKey();
 
     void attach(Tensor* tensor, CallbackFunc&& callback);
     void backward(std::vector<Tensor*>, std::vector<Tensor*>);
     void cleanup();
+    bool is_blocked() const {
+        return priority < sm_min_priority;
+    }
+    inline static bool allow_higher_order_directive = false;
+private:
+    static int sm_min_priority;
 };
 
 struct CustomBackward {
@@ -119,7 +127,7 @@ using GradRuleFn = std::function<grad_override_result(ApplyContext&, CustomBackw
 std::unordered_map<Typeinfo*, GradRuleFn>& grad_rule_registry();
 
 inline bool input_requires_grad(const ApplyContext& ctx, size_t i) {
-    return bool(ctx.args[i]->m_grad_info.grad_fn);
+    return !ctx.args[i]->m_grad_info_dict.empty();
 }
 
 struct GradRuleFallback : std::exception {};

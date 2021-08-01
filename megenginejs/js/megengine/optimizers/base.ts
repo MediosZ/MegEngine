@@ -11,7 +11,9 @@ export class BaseOptimizer{
 
     step(){
         for(let tensor of this.parameters){
-            this.update(tensor, tensor.grad);
+            if(tensor.grad){
+                this.update(tensor, tensor.grad);
+            }
         }
     }
 

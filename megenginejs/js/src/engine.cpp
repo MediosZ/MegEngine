@@ -3,69 +3,60 @@
 
 namespace mgb::imperative::js {
 
-
-Engine& Engine::inst() {
-    static Engine inst_;
-    return inst_;
-}
-
-Engine::Engine(){
-    // mgb_log("Create Engine");
+EngineWrapper::EngineWrapper() {
     inScope = true;
-    tensor_registry = std::make_shared<std::unordered_map<int, std::shared_ptr<Tensor>>>();
+    nextTensorID = 0;
+    mgb_log("creating EngineWrapper");
+}
+EngineWrapper::~EngineWrapper(){
+    mgb_log("Delete Engine, release %lu tensors", _tensor_registry.size());
 }
 
-Engine::~Engine(){
-    mgb_log("%lu tensors", tensor_registry->size());
-    mgb_log("Delete Engine");
-}
-
-void Engine::startScope(){
+void EngineWrapper::startScope(){
     gradkey = std::make_shared<GradKey>();
     inScope = true;
 }
 
-void Engine::endScope(){
+void EngineWrapper::endScope(){
     inScope = false;
 }
 
-void Engine::attach(Tensor* t, CallbackFunc&& callback){
+void EngineWrapper::_attach(Tensor* t, CallbackFunc&& callback){
     mgb_assert(inScope, "attach must be called inside a scope");
     gradkey->attach(t, std::move(callback));
 }
 
-void Engine::backward(std::vector<Tensor*> tensors, std::vector<Tensor*> grads){
+void EngineWrapper::_backward(std::vector<Tensor*> tensors, std::vector<Tensor*> grads){
     mgb_assert(inScope, "backward must be called inside a scope");
     gradkey->backward(tensors, grads);
 }
 
-int Engine::registerTensor(std::shared_ptr<Tensor> tensor){
+int EngineWrapper::_registerTensor(std::shared_ptr<Tensor> tensor){
     auto id = nextTensorID++;
-    insertTensor(id, tensor);
+    _tensor_registry.insert(std::make_pair(id, tensor));
     return id;
 }
 
-EngineWrapper::EngineWrapper(){
-    _tensor_wrapper_registry = std::make_shared<std::unordered_map<int, std::shared_ptr<TensorWrapper>>>();
-}
-
 void EngineWrapper::disposeTensor(int id){
-    // mgb_log("disposeTensor %d", id);
+    
     auto tensor = getTensorWrapper(id);
-    _engine.disposeTensor(tensor->_tensor);
+    // mgb_log("disposeTensor %d %d", id, tensor->_grad);
+    _tensor_registry.erase(tensor->_tensor);
     if(tensor->_grad != -1){
-        _engine.disposeTensor(tensor->_grad);
+        _tensor_registry.erase(tensor->_grad);
     }
-    _tensor_wrapper_registry->erase(id);
+    _tensor_wrapper_registry.erase(id);
 }
 
 void EngineWrapper::attach(int32_t id){
     auto tensor_wrapper = getTensorWrapper(id);
     auto tensor = getTensor(id);
-    _engine.attach(tensor.get(), [tensor_wrapper, this](std::shared_ptr<Tensor> grad){
+    // mgb_log("attach %d", id);
+    _attach(tensor.get(), [tensor_wrapper, this](std::shared_ptr<Tensor> grad){
         // there is no grad in current tensor
+        // mgb_log("receive tensor: %d, grad: %d", tensor_wrapper->_tensor, tensor_wrapper->_grad);
         if(tensor_wrapper->_grad == -1){
-            auto id = _engine.registerTensor(std::move(grad));
+            auto id = _registerTensor(std::move(grad));
             tensor_wrapper->_grad = id;
         }
         //replace old grad
@@ -84,8 +75,7 @@ void EngineWrapper::backward(int32_t id){
     Tensor* pdy = new Tensor(dy);
     std::vector<Tensor*> ts{tensor.get()};
     std::vector<Tensor*> gs{pdy};
-    _engine.backward(ts, gs);
-    // mgb_log("Backward Finish");
+    _backward(ts, gs);
 }
 
 
@@ -112,7 +102,6 @@ int EngineWrapper::registerTensorEM(const emscripten::val &v, const emscripten::
     auto cn = CompNode::load("cpu0");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, getDataType(type));
     assignData(data, ret, type);
-
     auto handle = interpreter_for_js->put(*ret, true);
     auto tensor = std::make_shared<Tensor>(handle);
     auto id = registerTensor(tensor);
@@ -124,8 +113,11 @@ int EngineWrapper::randn(const emscripten::val &v, const float mean, const float
     auto rv = getVectorFromVal(v);
     const auto l = v["length"].as<unsigned>();
     TensorShape shape = TensorShape{l};
-    auto op = GaussianRNG::make(rand(), mean, std);
+    auto seed = rand();
     auto cn = CompNode::load("cpu0");
+    auto rngHandle = rng::new_handle(cn, seed);
+    auto op = GaussianRNG::make(seed, mean, std, dtype::Float32(), rngHandle);
+    
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
     auto ptr = ret->ptr<int32_t>();
     for (uint32_t i=0; i<l; i++) {
@@ -293,12 +285,14 @@ int EngineWrapper::index_one_hot(int a, int index, int axis){
 }
 
 int EngineWrapper::registerTensor(std::shared_ptr<Tensor> t){
-    auto id = _engine.registerTensor(t);
-    _tensor_wrapper_registry->insert({id, std::make_shared<TensorWrapper>(id)});
+    auto id = _registerTensor(t);
+    auto pair = std::make_pair(id, std::make_shared<TensorWrapper>(id));
+    _tensor_wrapper_registry.insert(pair);
     return id;
 }
+
 int EngineWrapper::replaceTensor(int id, std::shared_ptr<Tensor> t){
-    _engine.replaceTensor(id, t);
+    _tensor_registry.at(id) = t;
     return id;
 }
 
@@ -356,8 +350,8 @@ std::string EngineWrapper::getTensorShape(const int id){
 
 void EngineWrapper::printTensor(int id){
     auto tensor = getTensor(id);
+    mgb_log("print Tensor %d", id);
     auto ptr = tensor->value().ptr<float>();
-    mgb_log("Tensor %d", id);
     for(size_t i = 0; i < tensor->shape().total_nr_elems(); i++){
         mgb_log("Tensor<%zu>: %f",i, ptr[i]);
     }
@@ -534,14 +528,24 @@ int EngineWrapper::argmax(int a, int axis){
     return id;
 }
 
+//! this function should not be marked as static
+EngineWrapper* EngineWrapperInst(){
+    if(_inst == NULL){
+        _inst = new EngineWrapper;
+    }
+    // mgb_log("wrapper: %p", _inst);
+    return _inst;
+}
 
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_BINDINGS(Engine) {
-    // emscripten::function("inst", &EngineWrapperInst, emscripten::allow_raw_pointers());
+    emscripten::function("runBackward", &testJSBack);
+    emscripten::function("initTensor", &initTensor);
+  emscripten::function("inst", &EngineWrapperInst, emscripten::allow_raw_pointers());
   emscripten::class_<EngineWrapper>("Engine")
     // .constructor<>()
     .smart_ptr<std::shared_ptr<EngineWrapper>>("Engine")
-    .class_function("inst", &EngineWrapper::Inst, emscripten::allow_raw_pointers())
+    //.class_function("inst", &EngineWrapper::Inst, emscripten::allow_raw_pointers())
     .function("startScope", &EngineWrapper::startScope)
     .function("endScope", &EngineWrapper::endScope)
     .function("attach", &EngineWrapper::attach)

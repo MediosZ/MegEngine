@@ -1,4 +1,4 @@
-
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti")
 file(GLOB_RECURSE SRCS impl/*.cpp include/*.h js/src/*.cpp js/src/*.h)
 
 file(GLOB_RECURSE ALL_HEADERS
@@ -31,18 +31,20 @@ target_link_libraries(meg PRIVATE range-v3)
 target_compile_options(meg PRIVATE "-Wall")
 set(FLAGS
     -s MODULARIZE=1
-    -s FORCE_FILESYSTEM=1
     --bind
+    -s FORCE_FILESYSTEM=1
     -s EXPORT_NAME='MegJSModule'
     -s EXPORTED_RUNTIME_METHODS="['cwrap', 'ccall']"
     -s ALLOW_MEMORY_GROWTH=1
-    -s INITIAL_MEMORY=512mb
-    -s TOTAL_STACK=128mb
     -s DISABLE_EXCEPTION_CATCHING=0
-    # -msse2
-    # -msse
-    # -msimd128
+    -s EXIT_RUNTIME=0
 )
+# -s FORCE_FILESYSTEM=1
+#-s INITIAL_MEMORY=512mb
+#-s TOTAL_STACK=128mb
+# -msse2
+# -msse
+# -msimd128
 #-s USE_PTHREADS=1 
 #-s PTHREAD_POOL_SIZE=4
 #-s PROXY_TO_PTHREAD=1

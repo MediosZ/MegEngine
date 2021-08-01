@@ -41,14 +41,15 @@ struct Interpreter {
 
         virtual DeviceTensorND get_dev_tensor(Handle) = 0;
 
+        virtual bool check_available() = 0;
         virtual void sync() = 0;
         virtual void close() = 0;
 
-        virtual int get_option(std::string name) = 0;
-        virtual void set_option(std::string name, int value) = 0;
+        virtual size_t get_option(std::string name) = 0;
+        virtual void set_option(std::string name, size_t value) = 0;
 
-        virtual void start_profile(std::unordered_map<std::string, int> option) = 0;
-        virtual void stop_profile(std::string basename, std::string format) = 0;
+        virtual void start_profile() = 0;
+        virtual void stop_profile() = 0;
 
         virtual void push_scope(std::string name) = 0;
         virtual void pop_scope(std::string name) = 0;

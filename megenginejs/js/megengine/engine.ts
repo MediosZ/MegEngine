@@ -30,8 +30,8 @@ class Engine{
 
   async init(){
     this.wasm = await init();
-    this.wasm.ccall("initTensor", null, null, null);
-    this.engine = this.wasm.Engine.inst(); // = new this.wasm.Engine();
+    this.wasm.initTensor();
+    this.engine = this.wasm.inst(); // = new this.wasm.Engine();
   }
 
   size(): number{
@@ -132,6 +132,10 @@ class Engine{
 
   updateGrad(t: Tensor){
     const grad_id = this.engine.getGrad(t.data);
+    if(grad_id === -1){
+        // tensor has no grad, return 
+        return;
+    }
     const grad_offset = this.engine.getGradOffset(t.data, t.dtype);
     t.grad = new Tensor(grad_id, t.shape, grad_offset, t.dtype);
   }

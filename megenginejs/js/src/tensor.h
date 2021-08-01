@@ -20,7 +20,7 @@
 #include "./trace_info.h" // for struct TraceInfo
 #include <iostream>
 namespace mgb::imperative::js {
-
+struct GradKey;
 extern interpreter::Interpreter::Channel* interpreter_for_js;
 
 class SharedHandle {
@@ -42,6 +42,33 @@ public:
     inline Handle get() {return holder.get();}
 };
 
+class GradInfoCollection {
+private:
+    SmallVector<GradInfo> m_storage;
+protected:
+    void _shrink();
+public:
+    bool contains(GradKey* key);
+    GradInfo& operator[](GradKey* key);
+    GradInfo& at(GradKey* key);
+    bool empty() {
+        _shrink();
+        return m_storage.empty();
+    }
+    auto begin() {
+        _shrink();
+        return m_storage.begin();
+    }
+    auto end() {
+        _shrink();
+        return m_storage.end();
+    }
+    size_t count(GradKey* key) {
+        return contains(key) ? 1 : 0;
+    }
+};
+
+
 
 struct Tensor : std::enable_shared_from_this<Tensor>, NonCopyableObj {
     using flags_t = uint64_t;
@@ -54,7 +81,7 @@ struct Tensor : std::enable_shared_from_this<Tensor>, NonCopyableObj {
 
     flags_t m_flags = 0;
 
-    GradInfo m_grad_info;
+    GradInfoCollection m_grad_info_dict;
     TraceInfo m_trace_info;
     SharedHandle m_handle;
     std::string user_custom_name;
@@ -73,7 +100,7 @@ struct Tensor : std::enable_shared_from_this<Tensor>, NonCopyableObj {
     inline std::shared_ptr<Tensor> copy() {
         auto ret = std::make_shared<Tensor>(m_handle);
         ret->m_flags = m_flags;
-        ret->m_grad_info = m_grad_info;
+        ret->m_grad_info_dict = m_grad_info_dict;
         ret->m_trace_info = m_trace_info;
         ret->m_var = m_var;
         return ret;
@@ -109,17 +136,16 @@ struct TensorWrapper{
     TensorWrapper(int tensor) : _tensor(tensor){
         _grad = -1;
     }
-
     int _tensor;
     int _grad;
-
 };
 
 
 struct ApplyContext {
     static Tensor::flags_t global_disable;
+    static Tensor::flags_t global_enable;
 
-    Tensor::flags_t flags;
+    Tensor::flags_t flags = 0;
     std::shared_ptr<OpDef> op;
     Tensor*const* args;
     size_t nargs;
@@ -161,42 +187,20 @@ decltype(auto) resolve_arrow(T&& p) {
 template <typename... Args>
 constexpr bool is_all_tensor_ptr = (... && std::is_same_v<decltype(resolve_arrow(std::declval<Args>())), Tensor*>);
 
-extern bool is_tracing; // FIXME: should use ApplyContext::global_enable
-extern bool is_compiled;
-
 template <typename... Args, std::enable_if_t<is_all_tensor_ptr<Args...>, int> = 0>
 apply_result_t apply(std::shared_ptr<OpDef> op, Args&&... args) {
     ApplyContext ctx;
     Tensor* arg_arr[] = {resolve_arrow(args)...};
     ctx.flags = (0 | ... | args->m_flags);
-    ctx.flags |= is_tracing ? Tensor::Flags::TRACE : 0;
     ctx.args = arg_arr;
     ctx.nargs = sizeof...(args);
     ctx.op = std::move(op);
     return apply(ctx);
 }
 
-template <typename T>
-auto apply(std::shared_ptr<OpDef> op, T&& tensors)
-        -> std::enable_if_t<std::is_same_v<decltype(resolve_arrow(tensors[0])), Tensor*>,
-                            apply_result_t> {
-    ApplyContext ctx;
-    ctx.op = std::move(op);
-    ctx.flags = is_tracing ? Tensor::Flags::TRACE : 0;
-    ctx.nargs = tensors.size();
-    Tensor* args[ctx.nargs];
-    ctx.args = args;
-    for (size_t i = 0; i < ctx.nargs; ++i) {
-        args[i] = resolve_arrow(tensors[i]);
-        ctx.flags |= args[i]->m_flags;
-    }
-    return apply(ctx);
-}
-
 inline auto apply(std::shared_ptr<OpDef> op, Tensor*const* args, size_t nargs) {
     ApplyContext ctx;
     ctx.op = std::move(op);
-    ctx.flags = is_tracing ? Tensor::Flags::TRACE : 0;
     ctx.nargs = nargs;
     ctx.args = args;
     for (size_t i = 0; i < nargs; ++i) {
@@ -205,7 +209,42 @@ inline auto apply(std::shared_ptr<OpDef> op, Tensor*const* args, size_t nargs) {
     return apply(ctx);
 }
 
-void jsapply();
-// void jsbackward();
+template <typename T>
+auto apply(std::shared_ptr<OpDef> op, T&& tensors)
+        -> std::enable_if_t<std::is_same_v<decltype(resolve_arrow(tensors[0])), Tensor*>,
+                            apply_result_t> {
+    size_t nargs = tensors.size();
+    Tensor* args[nargs];
+    for (size_t i = 0; i < nargs; ++i) {
+        args[i] = resolve_arrow(tensors[i]);
+    }
+    return apply(op, args, nargs);
+}
 
+std::shared_ptr<Tensor> make_const(imperative::TensorPtr value);
+
+inline auto apply(Subgraph graph, Tensor*const* args, size_t nargs) {
+    SmallVector<std::shared_ptr<Tensor>> inputs;
+    for (size_t i = 0; i < nargs; ++i) {
+        inputs.push_back(args[i]->shared_from_this());
+    }
+    auto apply_functor = [](std::shared_ptr<OpDef> op, SmallVector<std::shared_ptr<Tensor>> inputs) {
+        return apply(op, std::move(inputs));
+    };
+    return graph.apply(inputs, apply_functor, &make_const);
+}
+
+template <typename T>
+auto apply(Subgraph graph, T&& tensors)
+        -> std::enable_if_t<std::is_same_v<decltype(tensors[0]), Tensor*>,
+                            apply_result_t> {
+    size_t nargs = tensors.size();
+    Tensor* args[nargs];
+    for (size_t i = 0; i < nargs; ++i) {
+        args[i] = resolve_arrow(tensors[i]);
+    }
+    return apply(graph, args, nargs);
+}
+void testJSBack();
+void initTensor();
 }

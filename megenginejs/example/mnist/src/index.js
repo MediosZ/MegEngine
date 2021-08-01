@@ -25,7 +25,6 @@ class Lenet extends Module{
         this.fc1 = Linear(16 * 4 * 4, 120);
         this.fc2 = Linear(120, 84);
         this.classifier = Linear(84, 10);
-        this.subnet = new SubNet();
     }
     forward(inp){
         return ENGINE.tidy(() => {
@@ -47,11 +46,9 @@ async function mnist() {
     let batch_size = 500;
     let mnistData = new MnistData(batch_size);
     await mnistData.load();
-    console.log("load mnist");
     let lenet = new Lenet();
     let gm = new GradManager().attach(lenet.parameters());
     let opt = SGD(lenet.parameters(), 0.5);
-    console.log("start training");
     for(let i = 0; i < 1; i++){
       console.log(`epoch ${i}`);
       let trainGen = mnistData.getTrainData();
@@ -60,7 +57,6 @@ async function mnist() {
           if(done){
               break;
           }
-          
           let input = ENGINE.tidy(() => ENGINE.reshape(ENGINE.tensor(value["data"]), [batch_size, 1, 28, 28]));
           let label = ENGINE.tidy(() => ENGINE.argmax(ENGINE.astype(ENGINE.reshape(ENGINE.tensor(value["label"]), [batch_size, 10]), DType.int32), 1));
           let now = Date.now();
@@ -95,4 +91,5 @@ async function run(){
     console.log("save lenet");
     ENGINE.cleanup();
 }
-run();
+
+mnist();

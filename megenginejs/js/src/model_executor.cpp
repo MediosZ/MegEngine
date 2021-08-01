@@ -46,10 +46,10 @@ int32_t ModelExecutor::forward(const emscripten::val &v, const emscripten::val &
     auto handle = interpreter_for_js->put(predict, true);
     auto outTensor = std::make_shared<Tensor>(handle);
     if(output_id == -1){        
-        output_id = EngineWrapper::Inst()->registerTensor(outTensor);
+        output_id = EngineWrapperInst()->registerTensor(outTensor);
     }
     else{
-        EngineWrapper::Inst()->replaceTensor(output_id, outTensor);
+        EngineWrapperInst()->replaceTensor(output_id, outTensor);
     }
 
     return output_id;
