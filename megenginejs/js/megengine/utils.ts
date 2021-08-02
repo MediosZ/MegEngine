@@ -33,3 +33,12 @@ export function inferShape(data: RecursiveArray<number>): number[]{
   }
   return shape
 }
+
+export function calculateStrides(shape: number[]): number[]{
+  // calculate strides of a tensor
+  let strides = [1]
+  for(let i = 0; i < shape.length - 1; i++){
+    strides.push(strides[i] * shape[shape.length - i - 1])
+  }
+  return strides.reverse();
+}

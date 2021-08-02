@@ -5,6 +5,8 @@ export interface MegEngine extends EmscriptenModule {
     Engine: typeof WasmEngine;
     WasmModelExecutor: typeof WasmModelExecutor;
     FS_createDataFile(parent: string, path: string, data: TypedArray, canread: boolean, canwrite: boolean, canown: boolean): any;
+    initTensor(): void;
+    inst(): WasmEngine;
 }
 
 export interface WasmFactoryConfig {

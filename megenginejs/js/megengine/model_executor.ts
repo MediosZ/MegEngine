@@ -1,8 +1,8 @@
 import { RecursiveArray, TypedArray, isTypedArray, DType} from "./dtypes";
 import {ENGINE} from "./engine";
 import {WasmModelExecutor} from "./wasm_dtypes";
-import {TensorInfo, Tensor } from './tensor';
-import {inferShape, inferSizeFromShape, flatten} from './utils';
+import {TensorInfo} from './tensor';
+import {inferShape, flatten} from './utils';
 
 async function createFile(path: string): Promise<string> {
     return new Promise(async (resolve, reject) => {

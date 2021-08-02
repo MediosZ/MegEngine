@@ -1,5 +1,6 @@
 import { DType } from "./dtypes";
 import {ENGINE} from './engine';
+import { calculateStrides } from "./utils";
 
 
 export interface TensorInfo {
@@ -29,6 +30,11 @@ export class Tensor extends Parameter{
       this.requires_grad = true
       this.scopeid = -1;
   }
+
+  public get age() {
+    return this.shape.length;
+  }
+
 
   add(b: Tensor | number): Tensor{
     let that = this;
@@ -82,9 +88,32 @@ export class Tensor extends Parameter{
       return ENGINE.zeros([1]);
   }
 
-  
+  toString(): string{
+    let data = ENGINE.readSync(this);
+    const strides = calculateStrides(this.shape);
+
+    const tensorToString = (shape: number[], pre: number[]):string => {
+      if(shape.length == 1){
+        let numRows = shape[0];
+        const index = pre.map((value, i) => value * strides[i]).reduce((acc, cur) => acc + cur, 0);
+        let result = [];
+        for(let i = 0; i < numRows; i++){
+          result.push(data[index + i].toFixed(5).toString());
+        }
+        return `[ ${result.join(", ")} ]`;
+      }
+      let numRows = shape[0];
+      let result = [];
+      for(let i = 0; i < numRows; i++){
+        result.push(tensorToString(shape.slice(1), pre.concat([i])));
+      }
+      return shape.length > 2 ? `[ ${result.join(",\n\n")} ]` : `[ ${result.join(",\n")} ]`;
+    }
+    return `Tensor [${this.shape}] ${DType[this.dtype]} \n${tensorToString(this.shape, [])}`
+  }
 
   print() {
-
+    console.log(this.toString());
   }
 }
+
