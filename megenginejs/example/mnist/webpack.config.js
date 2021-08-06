@@ -35,6 +35,14 @@ module.exports = {
           },
         ],
       },
+      {
+        test: /\.mge$/i,
+        use: [
+          {
+            loader: 'file-loader',
+          },
+        ],
+      },
     ],
   },
   resolve: {

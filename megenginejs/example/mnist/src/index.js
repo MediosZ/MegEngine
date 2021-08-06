@@ -1,9 +1,9 @@
 
 import wasmPath from "megenginejs/meg.wasm";
-
+import mnistWeight from "../mnist.mge";
 import {
     ENGINE, setWasmPath, GradManager, SGD,
-    Conv2D, MaxPool2D, Linear, Module, RELU, CrossEntropy, DType, LocalStorageHandler} from "megenginejs";
+    Conv2D, MaxPool2D, Linear, Module, RELU, CrossEntropy, DType, LocalStorageHandler, FileHandler} from "megenginejs";
 
 import { MnistData } from "./mnist";
 
@@ -84,8 +84,9 @@ async function mnistTest(){
   await mnistData.load();
 
   let lenet = new Lenet();
-  let handler = new LocalStorageHandler("mnist");
-  lenet.load_state_dict(handler.load());
+  // let handler = new LocalStorageHandler("mnist");
+  let handler = new FileHandler("mnist");
+  lenet.load_state_dict(await handler.load(mnistWeight));
 
   let testGen = mnistData.getTestData();
   while(true){
@@ -103,6 +104,7 @@ async function mnistTest(){
       console.log("accuracy is ", acc);
       ENGINE.disposeTensor(input);
       ENGINE.disposeTensor(label);
+      ENGINE.disposeTensor(accTensor);
   }
 
   ENGINE.cleanup();

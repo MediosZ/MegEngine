@@ -23,5 +23,9 @@ export {
 
 
 export {
-  LocalStorageHandler
+  LocalStorageHandler,
 } from "./io/local_storage"
+
+export {
+  FileHandler
+} from "./io/file"
