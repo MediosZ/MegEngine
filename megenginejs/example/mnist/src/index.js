@@ -3,7 +3,7 @@ import wasmPath from "megenginejs/meg.wasm";
 
 import {
     ENGINE, setWasmPath, GradManager, SGD,
-    Conv2D, MaxPool2D, Linear, Module, RELU, CrossEntropy, DType} from "megenginejs";
+    Conv2D, MaxPool2D, Linear, Module, RELU, CrossEntropy, DType, LocalStorageHandler} from "megenginejs";
 
 import { MnistData } from "./mnist";
 
@@ -42,14 +42,15 @@ async function mnist() {
     console.log("Running Megenginejs");
     setWasmPath(wasmPath);
     await ENGINE.init();
-    
+    let handler = new LocalStorageHandler("mnist");
     let batch_size = 500;
     let mnistData = new MnistData(batch_size);
     await mnistData.load();
     let lenet = new Lenet();
+
     let gm = new GradManager().attach(lenet.parameters());
-    let opt = SGD(lenet.parameters(), 0.5);
-    for(let i = 0; i < 1; i++){
+    let opt = SGD(lenet.parameters(), 0.3);
+    for(let i = 0; i < 3; i++){
       console.log(`epoch ${i}`);
       let trainGen = mnistData.getTrainData();
       while(true){
@@ -76,9 +77,9 @@ async function mnist() {
           console.log(`step ${i} ${then - now}`);
       }
     };
-    
+    handler.save(lenet.state_dict());
+    console.log("save weight");
     ENGINE.cleanup();
-    
 }
 
 async function run(){
@@ -86,9 +87,12 @@ async function run(){
     setWasmPath(wasmPath);
     await ENGINE.init();
     let lenet = new Lenet();
-    let dict = lenet.state_dict();
-    console.log(dict);
-    console.log("save lenet");
+    // let dict = lenet.state_dict();
+    let handler = new LocalStorageHandler("someplace");
+    // handler.save(dict);
+    let dict = handler.load();
+    lenet.load_state_dict(dict);
+
     ENGINE.cleanup();
 }
 

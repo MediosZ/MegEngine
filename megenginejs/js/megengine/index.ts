@@ -20,3 +20,8 @@ export {
     MSE,
     CrossEntropy
 } from "./loss";
+
+
+export {
+  LocalStorageHandler
+} from "./io/local_storage"

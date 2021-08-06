@@ -81,7 +81,7 @@ void EngineWrapper::backward(int32_t id){
 
 #ifdef __EMSCRIPTEN__
 
-int EngineWrapper::replaceTensorEM(int a, const emscripten::val &v, const emscripten::val &data, const int type){
+int EngineWrapper::replaceTensorWithDataEM(int a, const emscripten::val &v, const emscripten::val &data, const int type){
     auto rv = getVectorFromVal(v);
     TensorShape shape = TensorShape(rv);
     
@@ -92,6 +92,10 @@ int EngineWrapper::replaceTensorEM(int a, const emscripten::val &v, const emscri
     auto handle = interpreter_for_js->put(*ret, true);
     auto tensor = std::make_shared<Tensor>(handle);
     replaceTensor(a, tensor);
+    return a;
+}
+int EngineWrapper::replaceTensorWithIDEM(int a, const int new_id){
+    replaceTensor(a, new_id);
     return a;
 }
 
@@ -293,6 +297,12 @@ int EngineWrapper::registerTensor(std::shared_ptr<Tensor> t){
 
 int EngineWrapper::replaceTensor(int id, std::shared_ptr<Tensor> t){
     _tensor_registry.at(id) = t;
+    return id;
+}
+
+int EngineWrapper::replaceTensor(int id, int new_id){
+    _tensor_registry.at(id) = getTensor(new_id);
+    disposeTensor(new_id);
     return id;
 }
 
@@ -551,7 +561,8 @@ EMSCRIPTEN_BINDINGS(Engine) {
     .function("attach", &EngineWrapper::attach)
     .function("backward", &EngineWrapper::backward)
     .function("registerTensor", &EngineWrapper::registerTensorEM)
-    .function("replaceTensor", &EngineWrapper::replaceTensorEM)
+    .function("replaceTensorWithData", &EngineWrapper::replaceTensorWithDataEM)
+    .function("replaceTensorWithID", &EngineWrapper::replaceTensorWithIDEM)
     .function("zeros", &EngineWrapper::zeros)
     .function("ones", &EngineWrapper::ones)
     .function("disposeTensor", &EngineWrapper::disposeTensor)

@@ -13,6 +13,8 @@ module.exports = {
         "Cross-Origin-Opener-Policy": "same-origin",
         "Cross-Origin-Embedder-Policy": "require-corp",
     },
+    port: 3000, 
+    public: 'localhost:3000',
   },
   optimization:{
     minimize: false,

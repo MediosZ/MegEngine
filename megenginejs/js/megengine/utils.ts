@@ -1,4 +1,4 @@
-import {RecursiveArray} from './dtypes';
+import {DType, RecursiveArray} from './dtypes';
 
 export function inferSizeFromShape(shape: number[]): number{
   if(shape.length == 0){
@@ -32,6 +32,18 @@ export function inferShape(data: RecursiveArray<number>): number[]{
       firstElem = firstElem[0];
   }
   return shape
+}
+
+export function getByteSizeFromDtype(dtype: DType){
+  if(dtype === DType.float32 || dtype === DType.int32){
+    return 4;
+  }
+  else if(dtype === DType.int8 || dtype === DType.uint8){
+    return 1;
+  }
+  else{
+    throw new Error("unsupported dtype");
+  }
 }
 
 export function calculateStrides(shape: number[]): number[]{

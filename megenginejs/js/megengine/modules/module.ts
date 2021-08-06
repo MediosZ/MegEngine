@@ -12,10 +12,9 @@ function extractProperties<T>(obj: object, predicate: (value: any) => boolean): 
 const extractTensors:(obj: object) => [string, Tensor][] = (obj: object) => extractProperties(obj, (value: any) => value instanceof Tensor);
 const extractModules:(obj: object) => [string, Module][] = (obj: object) => extractProperties(obj, (value: any) => value instanceof Module);
 
-class StateDict extends Map<string, Tensor>{
+export interface StateDict extends Map<string, Tensor>{
 
 }
-
 export class Module{
     forward(inp: Tensor){
         throw Error("not implemented");
@@ -40,8 +39,8 @@ export class Module{
         return res;
     }
 
-    _state_dict(): StateDict{
-        let res: StateDict = new StateDict();
+    state_dict(): StateDict{
+        let res = new Map();
         let retrive = (obj: Module, res: StateDict, _prefix: string = "") => {
             let prefix = _prefix === "" ? "" : _prefix + ".";
             let tensors = extractTensors(obj);
@@ -56,20 +55,24 @@ export class Module{
         retrive(this, res);
         return res;
     }
+    /*
+    state_dict(): StateDict{
+        let sd = this._state_dict();
+        let state_dict = new Map();
+        sd.forEach((tensor, key) => {
+          state_dict.set(key, ENGINE.readSync(tensor));
+        });
+        return state_dict;
+    }*/
 
-    state_dict(){
-        return Object.assign({}, 
-            ...Object.entries(this._state_dict()).map(
-                ([k, v]) => ({[k]: ENGINE.readSync(v)})
-            ));
-    }
-
-    load_state_dict(_state_dict: {[key: string]: TypedArray}){
-        let state_dict = this._state_dict()
-        Object.keys(state_dict).map(function(key, index) {
-            let oldTensor = state_dict.get(key);
-            const shapeBytes = new Int32Array(oldTensor.shape);
-            ENGINE.engine.replaceTensor(oldTensor.data, shapeBytes, _state_dict[key], oldTensor.dtype);
+    load_state_dict(state_dict: StateDict){
+        let _state_dict = this.state_dict()
+        _state_dict.forEach( (value, key) => {
+            if(!state_dict.has(key)){
+              throw new Error(`key ${key} missing`);
+            }
+            // replace tensor using two ids
+            ENGINE.engine.replaceTensorWithID(value.data, state_dict.get(key).data);
         });
     }
 }

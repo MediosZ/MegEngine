@@ -21,7 +21,8 @@ public:
     void backward(int32_t id);
 
     #ifdef __EMSCRIPTEN__
-    int replaceTensorEM(int a, const emscripten::val &v, const emscripten::val &data, const int type);
+    int replaceTensorWithDataEM(int a, const emscripten::val &v, const emscripten::val &data, const int type);
+    int replaceTensorWithIDEM(int a, const int new_id);
     int registerTensorEM(const emscripten::val &v, const emscripten::val &data, const int type);
     int randn(const emscripten::val &v, const float mean, const float std);
     int ones(const emscripten::val &v, int data_type);
@@ -34,6 +35,7 @@ public:
     int _registerTensor(std::shared_ptr<Tensor> tensor);
     int registerTensor(std::shared_ptr<Tensor> t);
     int replaceTensor(int id, std::shared_ptr<Tensor> t);
+    int replaceTensor(int id, int new_id);
 
     int index_one_hot(int a, int index, int axis);
     #ifdef __EMSCRIPTEN__
