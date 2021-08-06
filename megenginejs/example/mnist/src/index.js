@@ -7,14 +7,6 @@ import {
 
 import { MnistData } from "./mnist";
 
-class SubNet extends Module{
-    constructor(){
-        super();
-        this.c1 = Conv2D(1,6,5);
-        this.fc = Linear(120, 20);
-    }
-}
-
 class Lenet extends Module{
     constructor(){
         super();
@@ -43,14 +35,15 @@ async function mnist() {
     setWasmPath(wasmPath);
     await ENGINE.init();
     let handler = new LocalStorageHandler("mnist");
-    let batch_size = 500;
+    const batch_size = 500;
+    const epoch = 3;
     let mnistData = new MnistData(batch_size);
     await mnistData.load();
     let lenet = new Lenet();
 
     let gm = new GradManager().attach(lenet.parameters());
     let opt = SGD(lenet.parameters(), 0.3);
-    for(let i = 0; i < 3; i++){
+    for(let i = 0; i < epoch; i++){
       console.log(`epoch ${i}`);
       let trainGen = mnistData.getTrainData();
       while(true){
@@ -76,24 +69,43 @@ async function mnist() {
           let then = Date.now();
           console.log(`step ${i} ${then - now}`);
       }
+      handler.save(lenet.state_dict());
+      console.log("save weight");
     };
-    handler.save(lenet.state_dict());
-    console.log("save weight");
     ENGINE.cleanup();
 }
 
-async function run(){
-    console.log("Running Megenginejs");
-    setWasmPath(wasmPath);
-    await ENGINE.init();
-    let lenet = new Lenet();
-    // let dict = lenet.state_dict();
-    let handler = new LocalStorageHandler("someplace");
-    // handler.save(dict);
-    let dict = handler.load();
-    lenet.load_state_dict(dict);
+async function mnistTest(){
+  setWasmPath(wasmPath);
+  await ENGINE.init();
 
-    ENGINE.cleanup();
+  let batch_size = 500;
+  let mnistData = new MnistData(batch_size);
+  await mnistData.load();
+
+  let lenet = new Lenet();
+  let handler = new LocalStorageHandler("mnist");
+  lenet.load_state_dict(handler.load());
+
+  let testGen = mnistData.getTestData();
+  while(true){
+      let {value, done} = testGen.next();
+      if(done){
+          break;
+      }
+      let input = ENGINE.tidy(() => ENGINE.reshape(ENGINE.tensor(value["data"]), [batch_size, 1, 28, 28]));
+      let label = ENGINE.tidy(() => ENGINE.argmax(ENGINE.astype(ENGINE.reshape(ENGINE.tensor(value["label"]), [batch_size, 10]), DType.int32), 1));
+      let accTensor = ENGINE.tidy(() => {
+        let out = ENGINE.argmax(lenet.forward(input), 1);
+        return ENGINE.eq(out, label).sum();
+      });
+      let acc = accTensor.item() / batch_size;
+      console.log("accuracy is ", acc);
+      ENGINE.disposeTensor(input);
+      ENGINE.disposeTensor(label);
+  }
+
+  ENGINE.cleanup();
 }
 
-mnist();
+mnistTest();

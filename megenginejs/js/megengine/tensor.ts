@@ -88,6 +88,13 @@ export class Tensor extends Parameter{
       return ENGINE.zeros([1]);
   }
 
+  item(): number {
+    if(this.shape.length !== 1 ||this.shape[0] !== 1){
+      throw new Error("only scalar can call item()");
+    }
+    return ENGINE.readSync(this)[0];
+  }
+
   toString(): string{
     let data = ENGINE.readSync(this);
     const strides = calculateStrides(this.shape);

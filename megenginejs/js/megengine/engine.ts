@@ -193,8 +193,11 @@ class Engine{
   div(a: Tensor | number, b: Tensor | number): Tensor{
     let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
     let tensorB: Tensor = (b instanceof Tensor) ? b : this.tensor([b]);
+    if(tensorA.dtype !== DType.float32 || tensorB.dtype !== DType.float32){
+      throw new Error(`oprands in div should has dtype float32`);
+    }
     let outID = this.engine.div(tensorA.data, tensorB.data);
-    return this.createTensor(outID, this.getTensorShape(outID), tensorA.dtype);
+    return this.createTensor(outID, this.getTensorShape(outID), DType.float32);
   }
 
 
@@ -208,6 +211,12 @@ class Engine{
     return this.createTensor(outID, this.getTensorShape(outID), a.dtype);
   }
 
+  eq(a: Tensor | number, b: Tensor | number): Tensor{
+    let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
+    let tensorB: Tensor = (b instanceof Tensor) ? b : this.tensor([b]);
+    let outID = this.engine.eq(tensorA.data, tensorB.data);
+    return this.createTensor(outID, this.getTensorShape(outID), tensorA.dtype);
+  }
 
   log(a: Tensor): Tensor{
     let outID = this.engine.log(a.data);
@@ -373,7 +382,8 @@ class Engine{
     }
     else{
         let outID = this.engine.argmax(t.data, axis);
-        let out = this.createTensor(outID, this.getTensorShape(outID), t.dtype);
+        // output dtype must be int32 not t.dtype
+        let out = this.createTensor(outID, this.getTensorShape(outID), DType.int32);
         if(keepdims){
             return out;
         }

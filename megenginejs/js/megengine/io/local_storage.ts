@@ -5,14 +5,14 @@ import {inferSizeFromShape, getByteSizeFromDtype} from "../utils";
 import {WeightHandler, StateDict, TensorSpec, MgeModel} from "./index";
 import {concatenateTypedArrays, arrayBufferToBase64String, base64StringToArrayBuffer} from "./io_utils";
 
-export class LocalStorageHandler implements WeightHandler{
+export class LocalStorageHandler{
   model_path: string
 
   constructor(model_path: string){
     this.model_path = model_path
   }
 
-  save(state_dict: StateDict): void{
+  save(state_dict: StateDict){
     let specs: TensorSpec[] = []
     let typed_arrays: TypedArray[] = []
     state_dict.forEach((tensor, key) => {
@@ -21,7 +21,8 @@ export class LocalStorageHandler implements WeightHandler{
         shape: tensor.shape,
         dtype: tensor.dtype
       });
-      typed_arrays.push(ENGINE.readSync(tensor));
+      let arr = ENGINE.readSync(tensor);
+      typed_arrays.push(arr);
     });
     let artifact: MgeModel = {
       specs: specs,
@@ -54,6 +55,7 @@ export class LocalStorageHandler implements WeightHandler{
       } else {
         throw new Error(`Unsupported dtype in weight '${spec.name}': ${spec.dtype}`);
       }
+      offset += data_length;
       let tensor = ENGINE.tensor(value, {shape: spec.shape, dtype: spec.dtype});
       state_dict.set(spec.name, tensor);
     });

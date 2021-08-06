@@ -42,6 +42,7 @@ export function concatenateTypedArrays(xs: TypedArray[]): ArrayBuffer {
   const y = new Uint8Array(totalByteLength);
   let offset = 0;
   normalizedXs.forEach((x: TypedArray) => {
+    // console.log(x);
     y.set(new Uint8Array(x.buffer), offset);
     offset += x.byteLength;
   });

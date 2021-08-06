@@ -87,6 +87,8 @@ public:
 
     int typeCvt(int a, int type);
     int argmax(int a, int axis);
+
+    int eq(int a, int b);
     
 private:
     std::map<int, std::shared_ptr<TensorWrapper>> _tensor_wrapper_registry;

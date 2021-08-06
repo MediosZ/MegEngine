@@ -44,6 +44,8 @@ export class WasmEngine {
     
     randn(arg0: any, arg1: Float, arg2: Float): Int;
     
+    eq(arg0: Int, arg1: Int): Int;
+
     mul(arg0: Int, arg1: Int): Int;
     
     div(arg0: Int, arg1: Int): Int;

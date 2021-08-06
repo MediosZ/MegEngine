@@ -12,9 +12,6 @@ const MNIST_IMAGES_SPRITE_PATH =
 const MNIST_LABELS_PATH =
     'https://storage.googleapis.com/learnjs-data/model-builder/mnist_labels_uint8';
 
-
-import { ENGINE } from "megenginejs";
-    
 /**
  * A class that fetches the sprited MNIST dataset and provide data as
  * tf.Tensors.
@@ -110,12 +107,14 @@ export class MnistData {
                 label: testLabels.slice(i * NUM_CLASSES * batch_size, (i+1) * NUM_CLASSES * batch_size)
             }
         }
-        if(testNum * batch_size < NUM_TRAIN_ELEMENTS){
+        
+        if(testNum * batch_size < NUM_TEST_ELEMENTS){
             yield {
                 data: testImages.slice(testNum * batch_size * IMAGE_SIZE),
                 label: testLabels.slice(testNum * batch_size * NUM_CLASSES)
             }
         }
+        
     }
     return testDataGenerator(this.testImages, this.testLabels, this.testNum, this.batch_size);
   }

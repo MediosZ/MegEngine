@@ -385,6 +385,17 @@ int EngineWrapper::mul(int a, int b){
     return id;
 }
 
+
+int EngineWrapper::eq(int a, int b){
+    auto op = Elemwise::make(Elemwise::Mode::EQ);
+    auto tensorA = getTensor(a);
+    auto tensorB = getTensor(b);
+    auto outTensor = js::apply(op, tensorA.get(), tensorB.get())[0];
+    auto id = registerTensor(outTensor);
+    return id;
+}
+
+
 int EngineWrapper::matmul(int a, int b, bool transposeA = false, bool transposeB = false){
     auto op = MatrixMul::make(
         transposeA, transposeB, 
@@ -570,6 +581,7 @@ EMSCRIPTEN_BINDINGS(Engine) {
     .function("getGradOffset", &EngineWrapper::getGradOffset)
     .function("getGrad", &EngineWrapper::getGradID)
     .function("randn", &EngineWrapper::randn)
+    .function("eq", &EngineWrapper::eq)
     .function("mul", &EngineWrapper::mul)
     .function("div", &EngineWrapper::div)
     .function("matmul", &EngineWrapper::matmul)
