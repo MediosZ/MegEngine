@@ -1,0 +1,15 @@
+*.txt
+*.lock
+*.log
+tsconfig.json
+tsconfig.test.json
+rollup.config.js
+karma.conf.js
+wasm-out/
+tablegen/
+scripts/
+js/
+include/
+impl/
+example/
+coverage/
