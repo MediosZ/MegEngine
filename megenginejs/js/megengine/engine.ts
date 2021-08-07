@@ -174,12 +174,16 @@ class Engine{
     return this.createTensor(outID, this.getTensorShape(outID), tensorA.dtype);
   }
 
-  sub_(a: Tensor, b: Tensor){
-    this.engine.sub_(a.data, b.data);
+  sub_(a: Tensor | number, b: Tensor | number){
+    let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
+    let tensorB: Tensor = (b instanceof Tensor) ? b : this.tensor([b]);
+    this.engine.sub_(tensorA.data, tensorB.data);
   }
 
-  add_(a: Tensor, b: Tensor){
-    this.engine.add_(a.data, b.data);
+  add_(a: Tensor | number, b: Tensor | number){
+    let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
+    let tensorB: Tensor = (b instanceof Tensor) ? b : this.tensor([b]);
+    this.engine.add_(tensorA.data, tensorB.data);
   }
 
   mul(a: Tensor | number, b: Tensor | number): Tensor{

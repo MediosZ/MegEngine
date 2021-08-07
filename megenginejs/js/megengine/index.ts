@@ -14,5 +14,5 @@ export {
   loss
 };
 
-export { tensor, rand, argmax, astype, reshape, eq } from "./api/tensor";
-export { run, init, cleanup, tidy, disposeTensor, printTensor } from "./api/base";
+export * from "./api/tensor";
+export * from "./api/base";
