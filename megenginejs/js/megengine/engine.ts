@@ -5,8 +5,6 @@ import {Tensor, TensorInfo} from './tensor';
 export {setWasmPath} from './backend';
 import {WasmEngine} from "./wasm_dtypes";
 
-
-
 interface ScopeState {
     track: Tensor[];
     name: string;
@@ -445,7 +443,9 @@ class Engine{
 
   cleanup(){
       // console.log(this.tensorMap);
-      this.engine.delete();
+      if(this.engine){
+        this.engine.delete();
+      }
   }
 }
 

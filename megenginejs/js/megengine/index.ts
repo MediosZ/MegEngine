@@ -1,31 +1,18 @@
 export {DType, RecursiveArray, TypedArray} from './dtypes';
-export {ENGINE, setWasmPath} from './engine';
-export { Tensor } from './tensor';
-export {GradManager} from './grad_manager';
+export {setWasmPath} from './engine';
+export { GradManager } from './grad_manager';
 export {createModelExecutor} from "./model_executor";
-export {
-    Module, 
-    Conv2D, 
-    MaxPool2D, 
-    AveragePool2D, 
-    Linear,
-    RELU
-} from "./modules";
 
+import * as nn from "./modules";
+import * as io from "./io";
+import * as optim from "./optimizers";
+import * as loss from "./loss";
 export {
-    SGD
-} from "./optimizers";
+  nn,
+  io,
+  optim,
+  loss
+};
 
-export {
-    MSE,
-    CrossEntropy
-} from "./loss";
-
-
-export {
-  LocalStorageHandler,
-} from "./io/local_storage"
-
-export {
-  FileHandler
-} from "./io/file"
+export { tensor, rand, argmax, astype, reshape, eq } from "./api/tensor";
+export { init, cleanup, tidy, disposeTensor, printTensor } from "./api/base";

@@ -1,16 +1,20 @@
 
 import wasmPath from "megenginejs/meg.wasm";
 
-import {ENGINE, setWasmPath, GradManager, SGD, MSE, Linear} from "megenginejs";
+import * as mge from "megenginejs";
 
 async function run() {
-    setWasmPath(wasmPath);
+  try {
+    mge.setWasmPath(wasmPath);
     console.log("Playground!");
-    await ENGINE.init();
+    await mge.init();
 
-    let tensor = ENGINE.rand([3, 4, 3]);
+    let tensor = mge.rand([3, 4, 3]);
     tensor.print();
-    ENGINE.cleanup();
+  }
+  finally{ 
+    mge.cleanup();
+  }
 }
 
 run();

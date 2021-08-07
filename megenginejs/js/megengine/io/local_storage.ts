@@ -1,5 +1,5 @@
 import {StateDict } from "../modules/module";
-import {WeightHandler} from "./index";
+import {WeightHandler} from "./weight_handler";
 
 export class LocalStorageHandler extends WeightHandler{
   model_path: string

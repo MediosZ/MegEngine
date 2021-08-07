@@ -1,4 +1,4 @@
-import {WeightHandler} from "./index";
+import {WeightHandler} from "./weight_handler";
 import {StateDict } from "../modules/module";
 
 

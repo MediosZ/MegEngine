@@ -1,18 +1,21 @@
-
-import {ENGINE, setWasmPath, createModelExecutor, DType, GradManager, Tensor} from "megenginejs";
 import wasmPath from "megenginejs/meg.wasm";
+import * as mge from "megenginejs";
 import model from "./xornet_deploy.mge";
 
 async function run() {
-    setWasmPath(wasmPath);
+  try{
+    mge.setWasmPath(wasmPath);
     console.log("Model Executor!");
-    await ENGINE.init();
+    await mge.init();
     
-    let executor = await createModelExecutor(model);
-    let out = executor.forward([0.6, 0.9, 0.6, 0.9], {shape: [2, 2], dtype: DType.float32});
+    let executor = await mge.createModelExecutor(model);
+    let out = executor.forward([0.6, 0.9, 0.6, 0.9], {shape: [2, 2], dtype: mge.DType.float32});
     
-    ENGINE.printTensor(out);
-    ENGINE.cleanup();
+    out.print();
+  }
+  finally{
+    mge.cleanup();
+  }
 }
 
 run();

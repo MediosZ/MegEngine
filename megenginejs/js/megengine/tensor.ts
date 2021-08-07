@@ -1,4 +1,4 @@
-import { DType } from "./dtypes";
+import { DType} from "./dtypes";
 import {ENGINE} from './engine';
 import { calculateStrides } from "./utils";
 
@@ -7,7 +7,6 @@ export interface TensorInfo {
     shape?: number[];
     dtype: DType;
 }
-
 
 export class Parameter{}
 
@@ -123,4 +122,3 @@ export class Tensor extends Parameter{
     console.log(this.toString());
   }
 }
-
