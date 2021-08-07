@@ -1,4 +1,5 @@
-# 手写数字识别
+# Node
+
 ## webpack相关配置
 
 为了让Webpack能打包WASM文件，我们需要在代码中手动引入WASM文件，具体如下：

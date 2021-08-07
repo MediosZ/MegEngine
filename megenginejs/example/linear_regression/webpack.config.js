@@ -1,4 +1,3 @@
-const path = require('path')
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 
 module.exports = {
@@ -11,7 +10,7 @@ module.exports = {
   },
   plugins: [
     new HtmlWebpackPlugin({
-      title: 'Webpack sample app',
+      title: 'Linear Regression',
     }),
   ],
   module: {
@@ -26,10 +25,5 @@ module.exports = {
         ],
       },
     ],
-  },
-  resolve: {
-    alias: {
-      'megenginejs': '/Users/tricster/Documents/Code/MegEngine/megenginejs/dist/'
-    }
   }
 };

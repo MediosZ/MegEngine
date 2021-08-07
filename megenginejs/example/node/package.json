@@ -1,0 +1,16 @@
+{
+  "name": "megjs-node",
+  "version": "1.0.0",
+  "description": "Run megenginejs using node",
+  "private": true,
+  "scripts": {
+    "main": "node main.mjs"
+  },
+  "dependencies": {
+    "megenginejs": "file:../../dist/"
+  },
+  "browserslist": [
+    "defaults"
+  ],
+  "keywords": []
+}
