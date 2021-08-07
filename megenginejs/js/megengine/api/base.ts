@@ -1,6 +1,20 @@
 import {ENGINE} from "../engine";
 import {Tensor} from "../tensor";
 
+
+export async function run(fn: Function){
+  try{
+    await init();
+    fn();
+  }
+  catch(e){
+    console.log(e);
+  }
+  finally{
+    cleanup();
+  }
+}
+
 export async function init(){
     await ENGINE.init();
 } 

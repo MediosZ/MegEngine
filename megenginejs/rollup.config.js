@@ -1,5 +1,4 @@
 import typescript from '@rollup/plugin-typescript';
-import html  from '@rollup/plugin-html';
 import commonjs from '@rollup/plugin-commonjs';
 import resolve from '@rollup/plugin-node-resolve';
 import node from '@rollup/plugin-node-resolve';
@@ -11,9 +10,9 @@ export default {
   output: {
     dir: 'dist',
     format: 'umd',
-    name: 'megjs',
+    name: 'mge',
     extend: true,
-    sourcemap: true,
+    sourcemap: false,
     globals: {
         'fs': 'fs',
         'path': 'path',
@@ -35,10 +34,7 @@ export default {
       ignore: ['crypto', 'node-fetch', 'util'],
       include: ['node_modules/**', 'wasm-out/**']
     }),
-    html({
-        fileName: "index.html"
-    }),
-    // terser({output: {preamble: "//wasm-sample", comments: false}, compress: {typeofs: false}}),
+    terser({output: {preamble: "//wasm-sample", comments: false}, compress: {typeofs: false}}),
     nodePolyfills()
   ],
 };

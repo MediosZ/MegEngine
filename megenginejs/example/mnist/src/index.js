@@ -28,10 +28,9 @@ class Lenet extends mge.nn.Module{
 }
 
 async function mnist() {
-  try {
-    console.log("Running Megmgejs");
-    mge.setWasmPath(wasmPath);
-    await mge.init();
+  console.log("Train Mnist ... ");
+  mge.setWasmPath(wasmPath);
+  mge.run(async () => {
     let handler = new mge.io.LocalStorageHandler("mnist");
     const batch_size = 500;
     const epoch = 1;
@@ -70,16 +69,12 @@ async function mnist() {
       handler.save(lenet.state_dict());
       console.log("save weight");
     };
-  }
-  finally {
-    mge.cleanup();
-  }
+  });
 }
 
 async function mnistTest(){
   mge.setWasmPath(wasmPath);
-  await mge.init();
-  try{
+  mge.run( async () => {
     let batch_size = 500;
     let mnistData = new MnistData(batch_size);
     await mnistData.load();
@@ -108,10 +103,7 @@ async function mnistTest(){
         mge.disposeTensor(label);
         mge.disposeTensor(accTensor);
     }
-  }
-  finally{
-    mge.cleanup();
-  }
+  });
 }
 
-mnist();
+mnistTest();

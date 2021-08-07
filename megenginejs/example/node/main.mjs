@@ -1,9 +1,8 @@
 import * as mge from "megenginejs";
 
 async function run() {
-    try{
-      console.log("Linear Regression!");
-      await mge.init();
+    console.log("Linear Regression!");
+    mge.run(async () => {
       const epoch = 10;
       const num_inputs = 2;
       const num_examples = 300;
@@ -37,11 +36,8 @@ async function run() {
         opt.step();
       }
       console.log(`true_w: ${true_w.toString()}, \n get ${linear.weight.toString()}`);
-      console.log(`true_b: ${true_b.toString()}, \n get ${linear.bias.toString()}`);  
-    }
-    finally{
-      mge.cleanup();
-    }
+      console.log(`true_b: ${true_b.toString()}, \n get ${linear.bias.toString()}`);
+    });
 }
 
 run();
