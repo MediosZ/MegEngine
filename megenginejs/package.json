@@ -1,11 +1,11 @@
 {
   "name": "megenginejs",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "types": "dist/index.d.ts",
   "main": "dist/index.js",
   "module": "dist/index.js",
-  "license": "MIT",
-  "homepage": "https://github.com/MegEngine/MegEngine",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/MediosZ/MegEngine/tree/megjs",
   "scripts": {
     "build-mt": "node ./scripts/patch-worker-module.js && node ./scripts/patch-threaded-simd-module.js && yarn rollup -c rollup.config.js",
     "build": "yarn rollup -c rollup.config.js && cp wasm-out/meg* dist/",

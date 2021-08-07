@@ -16,10 +16,13 @@ MegEngine.js 构建在 MegEngine 之上，通过将MegEngine编译成WebAssembly
 
 ```html
 
-<script src="https://cdn.jsdelivr.net/npm/megenginejs"></script>
+<script src="https://cdn.jsdelivr.net/npm/megenginejs/dist/index.js"></script>
 
 <script>
-  // some code
+  mge.run(async () => {
+    let out = megjs.rand([2,3]);
+    out.print();
+  });
 </script>
 
 ```
