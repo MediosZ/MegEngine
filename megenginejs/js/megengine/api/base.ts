@@ -5,10 +5,10 @@ import {Tensor} from "../tensor";
 export async function run(fn: Function){
   try{
     await init();
-    fn();
+    await fn();
   }
   catch(e){
-    console.log(e);
+    throw new Error(e);
   }
   finally{
     cleanup();
@@ -33,4 +33,18 @@ export function disposeTensor(tensor: Tensor): void{
 
 export function printTensor(tensor: Tensor, msg?: string){
   ENGINE.printTensor(tensor, msg);
+}
+
+
+const delayCallback: Function = (() => {
+  if (typeof requestAnimationFrame !== 'undefined') {
+    return requestAnimationFrame;
+  } else if (typeof setImmediate !== 'undefined') {
+    return setImmediate;
+  }
+  return (f: Function) => f();  // no delays
+})();
+
+export function nextFrame(): Promise<void> {
+  return new Promise<void>(resolve => delayCallback(() => resolve()));
 }

@@ -1,4 +1,4 @@
-import wasmPath from "megenginejs/meg.wasm";
+import wasmPath from "megenginejs/dist/meg.wasm";
 import * as mge from "megenginejs";
 
 import mnistWeight from "../mnist.mge";
@@ -74,8 +74,10 @@ async function mnist() {
 
 async function mnistTest(){
   mge.setWasmPath(wasmPath);
-  mge.run( async () => {
-    let batch_size = 500;
+  let div = window.document.createElement("div");
+  window.document.body.appendChild(div);
+  await mge.run( async () => {
+    let batch_size = 250;
     let mnistData = new MnistData(batch_size);
     await mnistData.load();
   
@@ -85,6 +87,7 @@ async function mnistTest(){
     lenet.load_state_dict(await handler.load(mnistWeight));
   
     let testGen = mnistData.getTestData();
+    let logs = [];
     while(true){
         let {value, done} = testGen.next();
         if(done){
@@ -98,7 +101,10 @@ async function mnistTest(){
           return mge.eq(out, label).sum();
         });
         let acc = accTensor.item() / batch_size;
-        console.log("accuracy is ", acc);
+        // console.log("accuracy is ", acc);
+        logs.push(`<p>accuracy is ${acc}</p>`);
+        div.innerHTML = logs.join("\n");
+        await mge.nextFrame();
         mge.disposeTensor(input);
         mge.disposeTensor(label);
         mge.disposeTensor(accTensor);
