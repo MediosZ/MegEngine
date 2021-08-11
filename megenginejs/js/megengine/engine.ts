@@ -204,8 +204,16 @@ class Engine{
 
 
   matmul(a: Tensor, b: Tensor, transposeA: boolean = false, transposeB: boolean = false): Tensor{
+    if(a.shape.length !== b.shape.length){
+      if(a.shape.length === 1 && b.shape.length === 2){
+        a = this.reshape(a, [1, a.shape[0]]);
+      }
+      else{
+        throw new Error(`shape of a and b should be same, get a: ${a.shape}, b: ${b.shape}`);
+      }
+    }
     let outID = this.engine.matmul(a.data, b.data, transposeA, transposeB);
-    return this.createTensor(outID, this.getTensorShape(outID), a.dtype);
+    return this.squeeze(this.createTensor(outID, this.getTensorShape(outID), a.dtype));
   }
 
   sin(a: Tensor): Tensor{
@@ -264,17 +272,24 @@ class Engine{
                 throw Error(`expect shape[${index}] >= -1, got ${value}`);
             }
             if(unspec_axis){
-                throw Error(`multiple -1 in shape: ${unspec_axis} and ${index}`);
+                throw Error(`multiple -1 in shape at ${unspec_axis} and ${index}`);
             }
             unspec_axis = index;
         }
       });
-
+      if((unspec_axis === undefined) && inferSizeFromShape(shape) !== inferSizeFromShape(a.shape)){
+        throw new Error(`the shape of tensor mismatch, expect ${inferSizeFromShape(shape)}, get ${inferSizeFromShape(a.shape)}`);
+      }
       let outID = this.engine.reshape(a.data, shape, (unspec_axis === undefined) ? -1 : unspec_axis);
       return this.createTensor(outID, this.getTensorShape(outID), a.dtype);
   }
 
   removeAxis(a: Tensor, axis: number[]){
+    for(let idx of axis){
+      if(a.shape[idx] !== 1){
+        throw new Error(`axis ${idx} should be 1, got ${a.shape[idx]}`);
+      }
+    }
     let ax = axis.map((value, index) => {
         return value - index;
     });
@@ -443,6 +458,48 @@ class Engine{
       end();
       throw ex;
     }
+  }
+
+  equal(a: Tensor | number | RecursiveArray<number>, b: Tensor | number | RecursiveArray<number>): boolean {
+    let tensorA: Tensor;
+    if(typeof a == "number"){
+      tensorA = this.tensor([a]);
+    }
+    else if(Array.isArray(a)){
+      tensorA = this.tensor(a);
+    }
+    else{
+      tensorA = a as Tensor;
+    }
+    let tensorB: Tensor;
+    if(typeof b == "number"){
+      tensorB = this.tensor([b]);
+    }
+    else if(Array.isArray(b)){
+      tensorB = this.tensor(b);
+    }
+    else{
+      tensorB = b as Tensor;
+    }
+    if (tensorA.shape.length !== tensorB.shape.length) {
+      return false;
+    }
+    if(tensorA.dtype !== tensorB.dtype){
+      return false;
+    }
+    for (let i = 0; i < tensorA.shape.length; i++) {
+      if (tensorA.shape[i] !== tensorB.shape[i]) {
+        return false;
+      }
+    }
+    let aData = this.readSync(tensorA);
+    let bData = this.readSync(tensorB);
+    for (let i = 0; i < aData.length; i++) {
+      if(aData[i] !== bData[i]){
+        return false;
+      }
+    }
+    return true;
   }
 
   cleanup(){

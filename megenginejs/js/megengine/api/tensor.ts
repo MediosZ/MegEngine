@@ -109,3 +109,7 @@ export function argmax(tensor: Tensor, axis: number = 0,keepdims: boolean = fals
 export function reshape(tensor: Tensor, shape: number[]): Tensor{
   return ENGINE.reshape(tensor, shape);
 }
+
+export function equal(a: Tensor | number | RecursiveArray<number>, b: Tensor | number | RecursiveArray<number>): boolean{
+  return ENGINE.equal(a, b);
+}

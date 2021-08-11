@@ -8,7 +8,7 @@ export async function run(fn: Function){
     await fn();
   }
   catch(e){
-    throw new Error(e);
+    throw e;
   }
   finally{
     cleanup();

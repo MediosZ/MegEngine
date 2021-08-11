@@ -20,7 +20,7 @@ module.exports = function(config) {
 
       reporters: ["progress", "karma-typescript"],
 
-      browsers: ["Safari"],
+      browsers: ["Chrome"], // "Safari", 
       karmaTypescriptConfig: {
         tsconfig: 'tsconfig.test.json',
         compilerOptions: {allowJs: true, declaration: false},

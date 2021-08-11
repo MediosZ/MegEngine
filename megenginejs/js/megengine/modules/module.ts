@@ -1,4 +1,3 @@
-import { TypedArray } from "../dtypes";
 import { ENGINE } from "../engine";
 import {Tensor, Parameter} from "../tensor";
 
