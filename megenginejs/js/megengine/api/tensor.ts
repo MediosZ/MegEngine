@@ -58,6 +58,14 @@ export function log(a: Tensor): Tensor{
   return ENGINE.log(a);
 }
 
+export function cos(a: Tensor): Tensor{
+  return ENGINE.cos(a);
+}
+
+export function sin(a: Tensor): Tensor{
+  return ENGINE.sin(a);
+}
+
 export function mean(a: Tensor, axis?: number, keepdims=false): Tensor{
   return ENGINE.mean(a, axis, keepdims);
 }

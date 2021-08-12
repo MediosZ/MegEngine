@@ -25,6 +25,32 @@ describe("Operator Test", function() {
     });
   });
 
+  it("add_ ", async function() {
+    await mge.run( async () => {
+      let a = mge.tensor([1,2,3,4])
+      mge.add_(a, mge.tensor([1,2,3,4]));
+      expect(mge.equal(
+        a,
+        mge.tensor([2,4,6,8]))).toBe(true);
+      expect(mge.equal(
+        a,
+        mge.tensor([2,2,3,8]))).toBe(false);
+    });
+  });
+
+  it("sub_ ", async function() {
+    await mge.run( async () => {
+      let a = mge.tensor([4,3,2,1])
+      mge.sub_(a, mge.tensor([1,2,3,4]));
+      expect(mge.equal(
+        a,
+        mge.tensor([3,1,-1,-3]))).toBe(true);
+      expect(mge.equal(
+        a,
+        mge.tensor([2,1,3,3]))).toBe(false);;
+    });
+  });
+
   it("sub ", async function() {
     await mge.run( async () => {
       let a = mge.sub(mge.tensor([4,3,2,1]), mge.tensor([1,2,3,4]));
@@ -58,6 +84,62 @@ describe("Operator Test", function() {
       expect(mge.equal(
         a,
         mge.tensor([2,1,3,3]))).toBe(false);
+    });
+  });
+
+  it("log ", async function() {
+    await mge.run( async () => {
+      let a = mge.log(mge.tensor([4,3,2,1]));
+      expect(mge.equal(
+        a,
+        mge.tensor([Math.log(4), Math.log(3), Math.log(2), Math.log(1)]))).toBe(true);
+    });
+  });
+
+
+  it("relu ", async function() {
+    await mge.run( async () => {
+      let a = mge.relu(mge.tensor([-1,3,2,1]));
+      expect(mge.equal(
+        a,
+        mge.tensor([0,3,2,1]))).toBe(true);
+    });
+  });
+
+  it("exp ", async function() {
+    await mge.run( async () => {
+      let a = mge.exp(mge.tensor([4,3,2,1]));
+      a.print();
+      expect(mge.equal(
+        a,
+        mge.tensor([Math.exp(4), Math.exp(3), Math.exp(2), Math.exp(1)]))).toBe(true);
+    });
+  });
+
+  it("square ", async function() {
+    await mge.run( async () => {
+      let a = mge.square(mge.tensor([4,3,2,1]));
+      expect(mge.equal(
+        a,
+        mge.tensor([16, 9, 4, 1]))).toBe(true);
+    });
+  });
+
+  it("cos ", async function() {
+    await mge.run( async () => {
+      let a = mge.cos(mge.tensor([4,3,2,1]));
+      expect(mge.equal(
+        a,
+        mge.tensor([Math.cos(4), Math.cos(3), Math.cos(2), Math.cos(1)]))).toBe(true);
+    });
+  });
+
+  it("sin ", async function() {
+    await mge.run( async () => {
+      let a = mge.sin(mge.tensor([4,3,2,1]));
+      expect(mge.equal(
+        a,
+        mge.tensor([Math.sin(4), Math.sin(3), Math.sin(2), Math.sin(1)]))).toBe(true);
     });
   });
 

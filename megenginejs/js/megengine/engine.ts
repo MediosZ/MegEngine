@@ -495,7 +495,17 @@ class Engine{
     let aData = this.readSync(tensorA);
     let bData = this.readSync(tensorB);
     for (let i = 0; i < aData.length; i++) {
-      if(aData[i] !== bData[i]){
+      let left;
+      let right;
+      if(tensorA.dtype === DType.float32){
+        left = aData[i].toString().slice(0, 7);
+        right = bData[i].toString().slice(0, 7);
+      }
+      else{
+        left = aData[i].toString();
+        right = bData[i].toString();
+      }
+      if(left !== right){
         return false;
       }
     }
