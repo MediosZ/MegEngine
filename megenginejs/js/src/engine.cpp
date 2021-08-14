@@ -6,10 +6,10 @@ namespace mgb::imperative::js {
 EngineWrapper::EngineWrapper() {
     inScope = true;
     nextTensorID = 0;
-    mgb_log("creating EngineWrapper");
+    // mgb_log("creating EngineWrapper");
 }
 EngineWrapper::~EngineWrapper(){
-    mgb_log("Delete Engine, release %lu tensors", _tensor_registry.size());
+    // mgb_log("Delete Engine, release %lu tensors", _tensor_registry.size());
 }
 
 void EngineWrapper::startScope(){

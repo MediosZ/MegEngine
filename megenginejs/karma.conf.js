@@ -8,7 +8,7 @@ module.exports = function(config) {
           // Import the generated js library from emscripten.
           { pattern: 'wasm-out/*.js' },
           { pattern: "js/megengine/**/*.ts" },
-          { pattern: "test/**/*.ts" }
+          // { pattern: "test/**/*.ts" }
       ],
 
       preprocessors: {

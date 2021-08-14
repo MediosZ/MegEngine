@@ -109,7 +109,6 @@ describe("Operator Test", function() {
   it("exp ", async function() {
     await mge.run( async () => {
       let a = mge.exp(mge.tensor([4,3,2,1]));
-      a.print();
       expect(mge.equal(
         a,
         mge.tensor([Math.exp(4), Math.exp(3), Math.exp(2), Math.exp(1)]))).toBe(true);

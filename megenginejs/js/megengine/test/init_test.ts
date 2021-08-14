@@ -1,4 +1,4 @@
-/* import * as mge from "../";
+import * as mge from "../";
 
 describe("Engine Initialize",  function() {
   it("success ", function() {
@@ -7,4 +7,14 @@ describe("Engine Initialize",  function() {
     });
   });
 });
- */
+
+describe("NextFrame",  function() {
+  it("success ", function() {
+    expect(async () => {
+      await mge.run(async ()=>{
+        await mge.nextFrame();
+      })
+    });
+  });
+});
+
