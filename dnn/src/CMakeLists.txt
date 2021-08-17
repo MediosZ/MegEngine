@@ -4,6 +4,12 @@ file(GLOB_RECURSE SOURCES common/*.cpp naive/*.cpp)
 # Build configure
 list(APPEND SOURCES ${PROJECT_BINARY_DIR}/genfiles/megbrain_build_config.h)
 
+if(${MGE_ARCH} STREQUAL "wasm")
+    file(GLOB_RECURSE SOURCES_ wasm/*.cpp)
+    list(APPEND SOURCES ${SOURCES_})
+endif()
+
+
 if(NOT ${MGE_ARCH} STREQUAL "naive")
     file(GLOB_RECURSE SOURCES_ fallback/*.cpp)
     list(APPEND SOURCES ${SOURCES_})
@@ -249,7 +255,7 @@ if(MGE_WITH_CAMBRICON)
     target_link_libraries(megdnn PRIVATE ${BANG_OBJS} ${MGE_CAMBRICON_LIBS})
 endif()
 
-if(MGE_BUILD_MEGJS)
+if(${MGE_ARCH} STREQUAL "wasm")
     find_package(xnnpack REQUIRED)
     target_link_libraries(megdnn PRIVATE XNNPACK)
 endif()

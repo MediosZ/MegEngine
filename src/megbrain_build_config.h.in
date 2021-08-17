@@ -51,6 +51,7 @@
 #cmakedefine01 MEGDNN_ENABLE_MANGLING
 #cmakedefine01 MEGDNN_ENABLE_EXCEPTIONS
 #cmakedefine01 MEGDNN_NAIVE
+#cmakedefine01 MEGDNN_WASM
 #cmakedefine01 MEGDNN_X86
 #cmakedefine01 MEGDNN_X86_64
 #cmakedefine01 MEGDNN_64_BIT
@@ -225,6 +226,11 @@
 // whether to build naive
 #ifndef MEGDNN_NAIVE
 #define MEGDNN_NAIVE 0
+#endif
+
+// whether to build wasm
+#ifndef MEGDNN_WASM
+#define MEGDNN_WASM 0
 #endif
 
 // whether to build x86

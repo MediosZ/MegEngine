@@ -31,6 +31,7 @@ set_property(CACHE MGE_ARCH PROPERTY STRINGS AUTO
     x86_64 i386
     armv7 aarch64
     naive fallback
+    wasm
 )
 set (MGE_EXPORT_TARGETS MegEngine-targets)
 
@@ -886,6 +887,11 @@ endif()
 if(MGE_ARCH STREQUAL "naive")
     set(MEGDNN_NAIVE 1)
     message(STATUS "MEGDNN_NAIVE is enabled; MegDNN performance is degraded.")
+endif()
+
+if(MGE_ARCH STREQUAL "wasm")
+    set(MEGDNN_WASM 1)
+    message(STATUS "MEGDNN_WASM is enabled.")
 endif()
 
 if(MGE_ARCH STREQUAL "x86_64" OR MGE_ARCH STREQUAL "i386")
