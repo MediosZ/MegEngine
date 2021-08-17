@@ -16,13 +16,6 @@ target_include_directories(meg PUBLIC include
     ${PROJECT_SOURCE_DIR}/src/core/include
     ${MGB_OPDEF_OUT_DIR}
     )
-# add_compile_options(-pthread)
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
-#set(THREADS_PREFER_PTHREAD_FLAG ON)
-#find_package(Threads REQUIRED)
-#target_link_libraries(meg PRIVATE Threads::Threads)
-# message(STATUS "use ${CMAKE_THREAD_LIBS_INIT}")
-
 target_link_directories(meg PUBLIC "/usr/local/Cellar/gcc/10.2.0_4/lib/gcc/10/")
 target_link_libraries(meg PUBLIC megengine_export)
 

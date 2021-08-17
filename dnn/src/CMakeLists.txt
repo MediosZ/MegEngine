@@ -249,4 +249,9 @@ if(MGE_WITH_CAMBRICON)
     target_link_libraries(megdnn PRIVATE ${BANG_OBJS} ${MGE_CAMBRICON_LIBS})
 endif()
 
+if(MGE_BUILD_MEGJS)
+    find_package(xnnpack REQUIRED)
+    target_link_libraries(megdnn PRIVATE XNNPACK)
+endif()
+
 install(TARGETS megdnn EXPORT ${MGE_EXPORT_TARGETS})
