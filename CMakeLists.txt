@@ -31,6 +31,7 @@ set_property(CACHE MGE_ARCH PROPERTY STRINGS AUTO
     x86_64 i386
     armv7 aarch64
     naive fallback
+    wasm
 )
 set (MGE_EXPORT_TARGETS MegEngine-targets)
 
@@ -163,7 +164,7 @@ if(CMAKE_TOOLCHAIN_FILE)
     elseif(NOT "${ARM_CROSS_BUILD_ARCH}" STREQUAL "")
         set(MGE_ARCH ${ARM_CROSS_BUILD_ARCH})
     elseif(EMSCRIPTEN_ROOT_PATH)
-        set(MGE_ARCH "naive")
+        set(MGE_ARCH "wasm")
     else()
         message(FATAL_ERROR "Unknown cross-compiling settings.")
     endif()
@@ -172,7 +173,7 @@ endif()
 
 if(${MGE_ARCH} STREQUAL "AUTO")
     if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "AMD64")
-        set(MGE_ARCH "x86_64")
+        set(MGE_ARCH "wasm")
     elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "i386" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "i686")
         set(MGE_ARCH "i386")
     elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "arm64")
@@ -886,6 +887,11 @@ endif()
 if(MGE_ARCH STREQUAL "naive")
     set(MEGDNN_NAIVE 1)
     message(STATUS "MEGDNN_NAIVE is enabled; MegDNN performance is degraded.")
+endif()
+
+if(MGE_ARCH STREQUAL "wasm")
+    set(MEGDNN_WASM 1)
+    message(STATUS "MEGDNN_WASM is enabled.")
 endif()
 
 if(MGE_ARCH STREQUAL "x86_64" OR MGE_ARCH STREQUAL "i386")

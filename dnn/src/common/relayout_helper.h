@@ -41,14 +41,12 @@ bool is_transpose(const TensorLayout& src, const TensorLayout& dst,
 
 namespace transpose_fallback {
 
-#if MEGDNN_X86 || MEGDNN_NAIVE
+#if MEGDNN_X86 || MEGDNN_NAIVE || MEGDNN_WASM
 constexpr size_t BLOCK_LINE_SIZE_BYTES = 64;
 #elif MEGDNN_AARCH64 || MEGDNN_ARMV7
 constexpr size_t BLOCK_LINE_SIZE_BYTES = 32;
 #elif MEGDNN_RISCV64
 //! ref U54-MC arch
-constexpr size_t BLOCK_LINE_SIZE_BYTES = 64;
-#elif MEGDNN_NAIVE
 constexpr size_t BLOCK_LINE_SIZE_BYTES = 64;
 #else
 constexpr size_t BLOCK_LINE_SIZE_BYTES = 64;

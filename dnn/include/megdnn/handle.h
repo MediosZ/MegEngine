@@ -36,6 +36,7 @@ class Handle {
             ROCM = 11,
             ATLAS = 13,
             CAMBRICON = 12,
+            WASM = 14,
         };
 
         //! Device vendor

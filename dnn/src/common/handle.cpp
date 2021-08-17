@@ -19,6 +19,10 @@
 
 #include "midout.h"
 
+#if MEGDNN_WASM
+#include "src/wasm/handle.h"
+#endif 
+
 #if MEGDNN_X86
 #include "src/x86/handle.h"
 #endif
@@ -81,6 +85,8 @@ std::unique_ptr<Handle> Handle::make(megcoreComputingHandle_t computing_handle,
                 return make_unique<armv7::HandleImpl>(computing_handle);
 #elif MEGDNN_AARCH64
                 return make_unique<aarch64::HandleImpl>(computing_handle);
+#elif MEGDNN_WASM
+                return make_unique<wasm::HandleImpl>(computing_handle);
 #else
                 return make_unique<fallback::HandleImpl>(computing_handle);
 #endif
@@ -187,7 +193,10 @@ std::unique_ptr<Opr> Handle::create_operator() {
 
     switch (m_handle_type) {
         CASE(NAIVE, naive);
-#if !MEGDNN_NAIVE
+#if MEGDNN_WASM
+        CASE(WASM, wasm);
+#endif
+#if !MEGDNN_NAIVE && !MEGDNN_WASM
         CASE(FALLBACK, fallback);
 #if MEGDNN_X86
         CASE(X86, x86);

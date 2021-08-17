@@ -131,45 +131,18 @@ void initTensor(){
 
 void testJSBack(){
     auto wrapper = EngineWrapperInst();
-    
-    auto t1 = randTensor({50, 1, 28, 28});
-    auto t2 = randTensor({6, 1, 5, 5});
-    auto bias = randTensor({1, 6, 1, 1});
     auto a = randTensor({8, 8});
-    auto b = randTensor({8, 6});
+    auto b = randTensor({8, 8});
     auto aid = wrapper->registerTensor(a);
     auto bid = wrapper->registerTensor(b);
-    auto t1id = wrapper->registerTensor(t1);
-    auto t2id = wrapper->registerTensor(t2);
-    auto biasid = wrapper->registerTensor(bias);
-    mgb_log("register tensor %d, %d", t1id, t2id);
     
     wrapper->startScope();
     wrapper->attach(aid);
     wrapper->attach(bid);
-    wrapper->attach(t1id);
-    wrapper->attach(t2id);
-    wrapper->attach(biasid);
-    auto outid = wrapper->matmul(aid, bid, false, false);    
-    //auto outid = wrapper->conv2d(t1id, t2id, 1, 0);
-    // wrapper->add_(outid, biasid);
-
-    // wrapper->printTensor(outid);
-    // wrapper->printTensor(t2id);
-    // auto offset = wrapper->getTensorOffset(t2id, 0);
-    // mgb_log("offset %p", offset);
-    // wrapper->printTensor(outid);
-    // wrapper->printTensor(meanid);
-
+    auto outid = wrapper->matmul(aid, bid, false, false);
+    auto addid = wrapper->add(aid, bid);
     wrapper->backward(outid);
     wrapper->endScope();
-
-    // wrapper->printGrad(t1id);
-    // wrapper->printGrad(t2id);
-    // interpreter_for_js->del(t2->m_handle.get());
-    // wrapper->disposeTensor(outid);
-    // auto tensor = wrapper->getTensor(meanid);
-    // interpreter_for_js->del(tensor->m_handle.get());
     interpreter_for_js->sync();
     // delete wrapper;
 }
@@ -180,6 +153,6 @@ void testJSBack(){
 
 int main(){
     mgb_log("main function");
-    // mgb::imperative::js::initTensor();
-    // mgb::imperative::js::testJSBack();
+    mgb::imperative::js::initTensor();
+    mgb::imperative::js::testJSBack();
 }
