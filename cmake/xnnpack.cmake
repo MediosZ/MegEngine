@@ -23,9 +23,9 @@ OverridableFetchContent_Declare(
   xnnpack
   GIT_REPOSITORY https://github.com/MediosZ/XNNPACK
   # Sync with tensorflow/workspace2.bzl
-  GIT_TAG 1f5b108957941fb6cd814881c860cd5b64d5ca47
+  GIT_TAG 60d5ca03e8fe49db7e4732e80dbd82e5334b480d
   GIT_PROGRESS TRUE
-  PATCH_COMMAND git apply "${CMAKE_SOURCE_DIR}/third_party/xnnpack.patch"
+  # PATCH_COMMAND git apply "${CMAKE_SOURCE_DIR}/third_party/xnnpack.patch" || true
   PREFIX "${CMAKE_BINARY_DIR}"
   SOURCE_DIR "${CMAKE_BINARY_DIR}/xnnpack"
 )
@@ -41,9 +41,6 @@ set(XNNPACK_BUILD_BENCHMARKS OFF CACHE BOOL "Disable XNNPACK benchmarks.")
 
 # The following line adds project of PTHREADPOOL, FP16 and XNNPACK which are
 # needed to compile XNNPACK delegate of TFLite.
-message(STATUS ${xnnpack_SOURCE_DIR})
-message(STATUS ${xnnpack_BINARY_DIR})
-
 add_subdirectory(
   "${xnnpack_SOURCE_DIR}"
   "${xnnpack_BINARY_DIR}"
