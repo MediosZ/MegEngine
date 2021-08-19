@@ -101,7 +101,7 @@ apply_result_t apply(ApplyContext& ctx) {
 
 std::shared_ptr<Tensor> randTensor(std::initializer_list<int> init_list){
     TensorShape shape = TensorShape{init_list.size()};
-    auto cn = CompNode::load("cpu0");
+    auto cn = CompNode::load("cpu:default");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
     auto ptr = ret->ptr<int32_t>();
     int count{0};
@@ -144,7 +144,6 @@ void testJSBack(){
     wrapper->backward(outid);
     wrapper->endScope();
     interpreter_for_js->sync();
-    // delete wrapper;
 }
 
 
@@ -152,7 +151,11 @@ void testJSBack(){
 } // namespace
 
 int main(){
-    mgb_log("main function");
     mgb::imperative::js::initTensor();
+    mgb_log("main function");
+    
     mgb::imperative::js::testJSBack();
+    
+    mgb_log("main function end");
+    return 0;
 }

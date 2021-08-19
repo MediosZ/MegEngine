@@ -25,7 +25,17 @@ std::unique_ptr<Opr> HandleImpl::create_operator() {
 HandleImpl::HandleImpl(megcoreComputingHandle_t computing_handle,
                        HandleType type)
         : fallback::HandleImpl::HandleImpl(computing_handle, type) {
-    std::cout << "HandleImpl::HandleImpl" << std::endl;
+    auto status = xnn_initialize(nullptr);
+    if(status != xnn_status_success) {
+        megdnn_throw("unable to initialize xnnpack");
+    }
+}
+
+HandleImpl::~HandleImpl() {
+    auto status = xnn_deinitialize();
+    if(status != xnn_status_success) {
+        megdnn_throw("unable to deinitialize xnnpack");
+    }
 }
 
 size_t HandleImpl::alignment_requirement() const {

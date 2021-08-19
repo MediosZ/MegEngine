@@ -24,7 +24,7 @@ int32_t ModelExecutor::forward(const emscripten::val &v, const emscripten::val &
     auto rv = getVectorFromVal(v);
     TensorShape shape = TensorShape(rv);
     
-    auto cn = CompNode::load("cpu0");
+    auto cn = CompNode::load("cpu:default");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, getDataType(type));
     assignData(data, ret, type);
 

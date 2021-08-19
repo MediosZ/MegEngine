@@ -1,5 +1,5 @@
 /**
- * \file dnn/src/wasm/handle.h
+ * \file dnn/test/wasm/fixture.h
  * MegEngine is Licensed under the Apache License, Version 2.0 (the "License")
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
@@ -9,25 +9,31 @@
  * "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 #pragma once
-#include "src/fallback/handle.h"
-#include <xnnpack.h>
+#include <gtest/gtest.h>
+
+#include "megdnn/handle.h"
+#include "test/cpu/fixture.h"
+
+#include <memory>
+
 namespace megdnn {
-namespace wasm {
+namespace test {
 
-class HandleImpl : public fallback::HandleImpl {
+class WASM : public CPU {
 public:
-    HandleImpl(megcoreComputingHandle_t computing_handle,
-               HandleType type = HandleType::WASM);
-    ~HandleImpl() override;
-    
-    template <typename Opr>
-    std::unique_ptr<Opr> create_operator();
+    void TearDown() override;
 
-    size_t alignment_requirement() const override;
+    Handle* fallback_handle();
 
+private:
+    std::unique_ptr<Handle> m_handle, m_fallback_handle;
 };
 
-}  // namespace wasm
+class WASM_MULTI_THREADS : public CPU_MULTI_THREADS {};
+
+class WASM_BENCHMARK_MULTI_THREADS : public CPU_BENCHMARK_MULTI_THREADS {};
+
+}  // namespace test
 }  // namespace megdnn
 
 // vim: syntax=cpp.doxygen

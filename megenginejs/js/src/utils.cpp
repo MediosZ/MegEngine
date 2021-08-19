@@ -26,7 +26,7 @@ DType getDataType(int d){
 
 
 HostTensorND makeGrad(const TensorShape& shape){
-    auto cn = CompNode::load("cpu0");
+    auto cn = CompNode::load("cpu:default");
     HostTensorND ret = HostTensorND(cn, shape);
 
     auto ptr = ret.ptr<float>();
@@ -46,7 +46,7 @@ void printTensor(std::shared_ptr<Tensor> t){
 
 
 std::shared_ptr<Tensor> make_shape(std::initializer_list<int32_t> init_shape) {
-    auto cn = CompNode::load("cpu0");
+    auto cn = CompNode::load("cpu:default");
     HostTensorND scalar{cn, {{init_shape.size()}, dtype::Int32()}};
     auto ptr = scalar.ptr<int32_t>();
     auto idx = 0;
