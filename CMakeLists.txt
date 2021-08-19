@@ -1082,7 +1082,7 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/megengine.pc
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
 # Do not export targets if MGE_WITH_DISTRIBUTED is on. MegRay is not ready.
-if (NOT MGE_WITH_DISTRIBUTED AND NOT MGE_BUILD_MEGJS)
+if (OFF AND NOT MGE_WITH_DISTRIBUTED AND NOT MGE_BUILD_MEGJS)
     include(CMakePackageConfigHelpers)
     set (MGE_INSTALL_CMAKEDIR ${CMAKE_INSTALL_LIBDIR}/cmake/MegEngine)
     configure_package_config_file(cmake/MegEngineConfig.cmake.in

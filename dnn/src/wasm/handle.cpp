@@ -12,6 +12,7 @@
 #include "src/common/handle_impl.h"
 #include "src/common/version_symbol.h"
 #include "src/wasm/handle.h"
+#include "src/wasm/elemwise/opr_impl.h"
 #include <iostream>
 
 namespace megdnn {
@@ -41,7 +42,7 @@ HandleImpl::~HandleImpl() {
 size_t HandleImpl::alignment_requirement() const {
     return 32;
 }
-
+MEGDNN_SPECIALIZE_CREATE_OPERATOR(Elemwise)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpragmas"
 #pragma GCC diagnostic ignored "-Winstantiation-after-specialization"

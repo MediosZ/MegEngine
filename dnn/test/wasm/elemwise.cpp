@@ -68,13 +68,109 @@ TEST_F(WASM, ELEMWISE_FORWARD_UNARY) {
 
     checker.set_dtype(0, dtype::Int32());
     BUILD_UNARY_TEST_CASE_INT
-
+    
     // case float
     UniformFloatRNG rng(1e-2, 6e1);
     checker.set_rng(0, &rng);
     checker.set_epsilon(1e-6);
     checker.set_dtype(0, dtype::Float32());
     BUILD_UNARY_TEST_CASE_FLOAT
+}
+
+
+#define BINARY_TEST_CASE(_optr)                                             \
+    checker.set_param(Mode::_optr).execs({{3, 4, 17}, {3, 4, 17}, {}});     \
+    checker.set_param(Mode::_optr).execs({{3, 4, 5, 7}, {1, 1, 1, 1}, {}}); \
+    checker.set_param(Mode::_optr).execs({{1, 2, 2}, {1, 1, 1}, {}});       \
+    checker.set_param(Mode::_optr).execs({{1, 7}, {1, 7}, {}});
+
+#define BUILD_BINARY_TEST_CASE \
+    BINARY_TEST_CASE(MIN)      \
+    BINARY_TEST_CASE(MAX)
+
+#define BINARY_COMPLATE_TEST_CASE(_optr)                                    \
+    printf("Check binary optr %s by all cases.\n", #_optr);                 \
+    checker.set_param(Mode::_optr).execs({{3, 4, 7}, {3, 4, 7}, {}});       \
+    checker.set_param(Mode::_optr).execs({{3, 4, 5, 7}, {1, 4, 1, 1}, {}}); \
+    checker.set_param(Mode::_optr)                                          \
+            .execs({{3, 4, 5, 7, 8}, {3, 4, 5, 7, 8}, {}});                 \
+    checker.set_param(Mode::_optr)                                          \
+            .execs({{3, 4, 5, 7, 8}, {1, 4, 1, 1, 8}, {}});                 \
+    checker.set_param(Mode::_optr).execs({{3, 4, 7}, {1, 4, 1}, {}});       \
+    checker.set_param(Mode::_optr).execs({{3, 4, 5, 7}, {1, 1, 1, 1}, {}}); \
+    checker.set_param(Mode::_optr).execs({{1, 7}, {1, 7}, {}});             \
+    checker.set_param(Mode::_optr).execs({{1, 2, 2}, {1, 2, 1}, {}});       \
+    checker.set_param(Mode::_optr).execs({{1, 2, 2}, {1, 1, 1}, {}});       \
+    checker.set_param(Mode::_optr).execs({{3, 4, 1}, {3, 4, 1}, {}});
+
+#define BUILD_BINARY_COMPLATE_TEST_CASE \
+    BINARY_COMPLATE_TEST_CASE(ADD)      \
+    BINARY_COMPLATE_TEST_CASE(MUL)      \
+    BINARY_COMPLATE_TEST_CASE(MAX)      \
+    BINARY_COMPLATE_TEST_CASE(MIN)      \
+    BINARY_COMPLATE_TEST_CASE(SUB)
+
+#define BUILD_BINARY_COMPLATE_TEST_CASE_FLOAT32 \
+    BINARY_COMPLATE_TEST_CASE(TRUE_DIV)         \
+    BINARY_COMPLATE_TEST_CASE(FUSE_ADD_SIGMOID) \
+    BINARY_COMPLATE_TEST_CASE(FUSE_ADD_TANH)    \
+    BINARY_COMPLATE_TEST_CASE(FUSE_ADD_RELU)
+
+TEST_F(WASM, ELEMWISE_FORWARD_NCHW88) {
+    using Mode = ElemwiseForward::Param::Mode;
+    Checker<ElemwiseForward> checker(handle());
+
+    // case float
+    UniformFloatRNG rng(1e-5, 7e1);
+    checker.set_rng(0, &rng);
+    checker.set_epsilon(1e-5);
+    checker.set_dtype(0, dtype::Float32());
+    checker.set_dtype(1, dtype::Float32());
+
+    checker.set_param(Mode::ADD).execs({{1, 3, 2, 2, 8}, {1, 3, 1, 1, 8}, {}});
+    checker.set_param(Mode::ADD).execs({{2, 3, 2, 2, 8}, {1, 3, 1, 1, 8}, {}});
+    checker.set_param(Mode::ADD).execs({{3, 8, 5, 3, 8}, {1, 8, 1, 1, 8}, {}});
+    checker.set_param(Mode::ADD).execs({{3, 4, 5, 7, 8}, {3, 4, 5, 7, 8}, {}});
+    checker.set_param(Mode::ADD).execs({{1, 2, 5, 7, 8}, {1, 2, 1, 1, 8}, {}});
+    checker.set_param(Mode::FUSE_ADD_RELU)
+            .execs({{1, 3, 2, 2, 8}, {1, 3, 1, 1, 8}, {}});
+    checker.set_param(Mode::FUSE_ADD_RELU)
+            .execs({{2, 3, 2, 2, 8}, {1, 3, 1, 1, 8}, {}});
+    checker.set_param(Mode::FUSE_ADD_RELU)
+            .execs({{3, 8, 5, 3, 8}, {1, 8, 1, 1, 8}, {}});
+    checker.set_param(Mode::FUSE_ADD_RELU)
+            .execs({{3, 4, 5, 7, 8}, {3, 4, 5, 7, 8}, {}});
+    checker.set_param(Mode::FUSE_ADD_RELU)
+            .execs({{1, 2, 5, 7, 8}, {1, 2, 1, 1, 8}, {}});
+}
+TEST_F(WASM, ELEMWISE_FORWARD_BINARY) {
+    using Mode = ElemwiseForward::Param::Mode;
+    Checker<ElemwiseForward> checker(handle());
+
+    // case float
+    UniformFloatRNG rng(1e-5, 7e1);
+    checker.set_rng(0, &rng);
+    checker.set_epsilon(1e-5);
+    checker.set_dtype(0, dtype::Float32());
+    checker.set_dtype(1, dtype::Float32());
+    BUILD_BINARY_COMPLATE_TEST_CASE
+    BUILD_BINARY_COMPLATE_TEST_CASE_FLOAT32
+
+    // case int
+    checker.set_dtype(0, dtype::Int8());
+    checker.set_dtype(1, dtype::Int8());
+    BUILD_BINARY_TEST_CASE
+    BUILD_BINARY_COMPLATE_TEST_CASE
+
+    checker.set_dtype(0, dtype::Int16());
+    checker.set_dtype(1, dtype::Int16());
+    BUILD_BINARY_TEST_CASE
+    BUILD_BINARY_COMPLATE_TEST_CASE
+
+    checker.set_dtype(0, dtype::Int32());
+    checker.set_dtype(1, dtype::Int32());
+    BUILD_BINARY_TEST_CASE
+    BUILD_BINARY_COMPLATE_TEST_CASE
 }
 
 

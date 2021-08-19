@@ -10,6 +10,8 @@
  */
 #pragma once
 #include "src/fallback/elemwise/opr_impl.h"
+#include "src/wasm/elemwise/kimpl/unary.h"
+#include "src/wasm/elemwise/kimpl/binary.h"
 
 namespace megdnn {
 namespace wasm {
