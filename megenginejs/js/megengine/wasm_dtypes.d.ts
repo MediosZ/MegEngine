@@ -28,6 +28,8 @@ export class WasmEngine {
 
     replaceTensorWithID(arg0: Int, arg1: Int): Int;
 
+    dot(arg0: Int, arg1: Int): Int;
+
     registerTensor(arg0: any, arg1: any, arg2: Int): Int;
     
     zeros(arg0: any, arg1: Int): Int;
@@ -51,6 +53,8 @@ export class WasmEngine {
     div(arg0: Int, arg1: Int): Int;
     
     matmul(arg0: Int, arg1: Int, arg2: boolean, arg3: boolean): Int;
+
+    batch_matmul(arg0: Int, arg1: Int, arg2: boolean, arg3: boolean): Int;
     
     add(arg0: Int, arg1: Int): Int;
     
@@ -71,6 +75,8 @@ export class WasmEngine {
     relu(arg0: Int): Int;
     
     reshape(arg0: Int, arg1: any, arg2: Int): Int;
+
+    broadcast_to(arg0: Int, arg1: any): Int;
     
     log(arg0: Int): Int;
     
