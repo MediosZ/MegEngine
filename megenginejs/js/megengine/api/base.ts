@@ -35,6 +35,9 @@ export function printTensor(tensor: Tensor, msg?: string){
   ENGINE.printTensor(tensor, msg);
 }
 
+export function size(): number {
+  return ENGINE.size();
+}
 
 const delayCallback: Function = (() => {
   if (typeof requestAnimationFrame !== 'undefined') {
