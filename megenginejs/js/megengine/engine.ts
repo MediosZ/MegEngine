@@ -212,17 +212,23 @@ class Engine{
     }
     let tensorA: Tensor = a;
     let tensorB: Tensor = b;
+    let removeRow = false;
+    let removeCol = false;
     return this.tidy(() => {
       if(dimA === 1){
         tensorA = this.unsqueeze(a, 0);
         dimA = 2;
-      }
+        removeRow = true;
+      } 
       if(dimB === 1){
         tensorB = this.unsqueeze(b, 1);
         dimB = 2;
+        removeCol = true;
       }
       let shapeA = a.shape;
       let shapeB = b.shape;
+      let batchShape: number[];
+      const maxdim = Math.max(dimA, dimB);
       if(dimA >= 3 || dimB >= 3){
         if(dimA > dimB){
           shapeB = shapeA.slice(0, -2).concat(shapeB.slice(-2));
@@ -232,12 +238,41 @@ class Engine{
           shapeA = shapeB.slice(0, -2).concat(shapeA.slice(-2));
           tensorA = this.broadcast_to(tensorA, shapeA);
         }
+        if(dimA === dimB){
+          for(let i = 0; i < dimA - 2; i++){
+            if(shapeA[i] !== shapeB[i]){
+              throw new Error(`matmul: shape mismatch at dim ${i}`);
+            }
+          }
+        }
+        if(maxdim > 3){
+          batchShape = shapeA.slice(0, -2);
+          tensorA = this.reshape(tensorA, [-1].concat(shapeA.slice(-2)));
+          tensorB = this.reshape(tensorB, [-1].concat(shapeB.slice(-2)));
+        }
         let outID = this.engine.batch_matmul(tensorA.data, tensorB.data, transposeA, transposeB);
-        return this.createTensor(outID, this.getTensorShape(outID), tensorA.dtype);
+        let out = this.createTensor(outID, this.getTensorShape(outID), tensorA.dtype);
+        if(maxdim > 3){
+          out = this.reshape(out, batchShape.concat(out.shape.slice(-2)));
+        }
+        if(removeRow){
+          out = this.squeeze(out, -2);
+        }
+        if(removeCol){
+          out = this.squeeze(out, -1);
+        }
+        return out;
       }
       else{
-        let outID = this.engine.matmul(tensorA.data, tensorA.data, transposeA, transposeB);
-        return this.createTensor(outID, this.getTensorShape(outID), tensorB.dtype);
+        let outID = this.engine.matmul(tensorA.data, tensorB.data, transposeA, transposeB);
+        let out = this.createTensor(outID, this.getTensorShape(outID), tensorB.dtype);
+        if(removeRow){
+          out = this.squeeze(out, -2);
+        }
+        if(removeCol){
+          out = this.squeeze(out, -1);
+        }
+        return out;
       }
     });
   }
@@ -335,8 +370,11 @@ class Engine{
   }
 
   squeeze(t: Tensor, axis?: number){
-    if(axis === undefined || axis === -1){
+    if(axis === undefined){
       return this.removeAxis(t, [t.shape.length - 1]);
+    }
+    else if(axis < 0){
+      return this.removeAxis(t, [t.shape.length + axis]);
     }
     else{
       return this.removeAxis(t, [axis]);
@@ -344,8 +382,11 @@ class Engine{
   }
 
   unsqueeze(t: Tensor, axis?: number){
-    if(axis === undefined || axis === -1){
+    if(axis === undefined){
       return this.addAxis(t, [t.shape.length]);
+    }
+    else if(axis < 0){
+      return this.addAxis(t, [t.shape.length + axis]);
     }
     else{
       return this.addAxis(t, [axis]);

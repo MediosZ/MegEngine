@@ -148,6 +148,12 @@ describe("Operator Test", function() {
       expect(mge.equal(
         a,
         20)).toBe(true);
+      mge.matmul(mge.rand([4,3]), mge.rand([3,4]));
+      mge.matmul(mge.rand([4]), mge.rand([4,3]));
+      mge.matmul(mge.rand([4,3]), mge.rand([3]));
+      mge.matmul(mge.rand([4,4,3]), mge.rand([4,3,4]));
+      mge.matmul(mge.rand([3,4,3]), mge.rand([3,4]));
+      mge.matmul(mge.rand([3,3,4,4]), mge.rand([3,3,4,4]));
     });
   });
 
