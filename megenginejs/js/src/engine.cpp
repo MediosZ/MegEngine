@@ -246,6 +246,31 @@ int EngineWrapper::reshape(int a, const emscripten::val &v, int unspec){
     return id; 
 }
 
+
+int EngineWrapper::broadcast_to(int a, const emscripten::val &v){
+    SmallVector<size_t> rv;
+    const auto l = v["length"].as<unsigned>();
+    rv.resize(l);
+    emscripten::val memoryView{emscripten::typed_memory_view(l, rv.data())};
+    memoryView.call<void>("set", v);
+    TensorShape shape = TensorShape{l};
+    auto cn = CompNode::load("cpu0");
+    std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
+    auto ptr = ret->ptr<int32_t>();
+    for (uint32_t i=0; i<l; i++) {
+        ptr[i] = rv[i];
+    }
+    auto handle = interpreter_for_js->put(*ret, true);
+    // shape tensor
+    auto shapeTensor = std::make_shared<Tensor>(handle);
+
+    auto tensor = getTensor(a);
+    auto op = Broadcast::make();
+    auto outTensor = js::apply(op, tensor.get(), shapeTensor.get())[0];
+    auto id = registerTensor(outTensor);
+    return id; 
+}
+
 int EngineWrapper::removeAxis(int a, const emscripten::val &v){
     std::vector<int32_t> rv;
     const auto l = v["length"].as<unsigned>();
@@ -408,6 +433,19 @@ int EngineWrapper::matmul(int a, int b, bool transposeA = false, bool transposeB
     return id;
 }
 
+int EngineWrapper::batch_matmul(int a, int b, bool transposeA = false, bool transposeB = false){
+    auto op = BatchedMatrixMul::make(
+        transposeA, transposeB, 
+        BatchedMatrixMul::ComputeMode::DEFAULT, BatchedMatrixMul::Format::DEFAULT, 
+        BatchedMatrixMul::Strategy::HEURISTIC, 18446744073709551615ull);
+    auto tensorA = getTensor(a);
+    auto tensorB = getTensor(b);
+    auto outTensor = js::apply(op, tensorA.get(), tensorB.get())[0];
+    auto id = registerTensor(outTensor);
+    return id;
+}
+
+
 int EngineWrapper::add_(int a, int b){
     auto op = Elemwise::make(Elemwise::Mode::ADD);
     auto tensorA = getTensor(a);
@@ -533,6 +571,15 @@ int EngineWrapper::exp(int a){
     return id; 
 }
 
+int EngineWrapper::dot(const int a, const int b){
+    auto tensorA = getTensor(a);
+    auto tensorB = getTensor(b);
+    auto op = Dot::make();
+    auto outTensor = js::apply(op, tensorA.get(), tensorB.get())[0];
+    auto id = registerTensor(outTensor);
+    return id;
+}
+
 int EngineWrapper::typeCvt(int a, int type){
     auto op = TypeCvt::make(getDataType(type));
     auto tensorA = getTensor(a);
@@ -585,6 +632,7 @@ EMSCRIPTEN_BINDINGS(Engine) {
     .function("mul", &EngineWrapper::mul)
     .function("div", &EngineWrapper::div)
     .function("matmul", &EngineWrapper::matmul)
+    .function("batch_matmul", &EngineWrapper::batch_matmul)
     .function("add", &EngineWrapper::add)
     .function("sub", &EngineWrapper::sub)
     .function("add_", &EngineWrapper::add_)
@@ -595,6 +643,7 @@ EMSCRIPTEN_BINDINGS(Engine) {
     .function("pool", &EngineWrapper::pool)
     .function("relu", &EngineWrapper::relu)
     .function("reshape", &EngineWrapper::reshape)
+    .function("broadcast_to", &EngineWrapper::broadcast_to)
     .function("log", &EngineWrapper::log)
     .function("reduce", &EngineWrapper::reduce)
     .function("removeAxis", &EngineWrapper::removeAxis)
@@ -605,6 +654,7 @@ EMSCRIPTEN_BINDINGS(Engine) {
     .function("astype", &EngineWrapper::typeCvt)
     .function("argmax", &EngineWrapper::argmax)
     .function("size", &EngineWrapper::size)
+    .function("dot", &EngineWrapper::dot)
     ;
 
 }

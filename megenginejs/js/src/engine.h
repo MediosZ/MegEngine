@@ -28,6 +28,7 @@ public:
     int ones(const emscripten::val &v, int data_type);
     int zeros(const emscripten::val &v, int data_type);
     int reshape(int a, const emscripten::val &v, int unspec);
+    int broadcast_to(int a, const emscripten::val &v);
     int removeAxis(int a, const emscripten::val &v);
     int addAxis(int a, const emscripten::val &v);
     
@@ -72,6 +73,7 @@ public:
     int mul(int a, int b);
     int div(int a, int b);
     int matmul(int a, int b, bool transposeA, bool transposeB);
+    int batch_matmul(int a, int b, bool transposeA, bool transposeB);
     int add(int a, int b);
     int sub(int a, int b);
     int add_(int a, int b);
@@ -84,6 +86,7 @@ public:
     int log(int a);
     int reduce(int a, int mode, int axis);
     int exp(int a);
+    int dot(int a, int b);
 
     int typeCvt(int a, int type);
     int argmax(int a, int axis);
