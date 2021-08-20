@@ -131,17 +131,17 @@ void initTensor(){
 
 void testJSBack(){
     auto wrapper = EngineWrapperInst();
-    auto a = randTensor({8, 8});
-    auto b = randTensor({8, 8});
+    auto a = randTensor({5, 8, 8});
+    auto b = randTensor({5, 8, 8});
     auto aid = wrapper->registerTensor(a);
     auto bid = wrapper->registerTensor(b);
     
     wrapper->startScope();
     wrapper->attach(aid);
     wrapper->attach(bid);
-    auto outid = wrapper->matmul(aid, bid, false, false);
-    auto addid = wrapper->add(aid, bid);
-    wrapper->backward(outid);
+    auto outid = wrapper->batch_matmul(aid, bid, false, false);
+    // auto addid = wrapper->add(aid, bid);
+    // wrapper->backward(outid);
     wrapper->endScope();
     interpreter_for_js->sync();
 }

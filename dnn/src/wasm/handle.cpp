@@ -13,6 +13,7 @@
 #include "src/common/version_symbol.h"
 #include "src/wasm/handle.h"
 #include "src/wasm/elemwise/opr_impl.h"
+#include "src/wasm/batched_matrix_mul/opr_impl.h"
 #include <iostream>
 
 namespace megdnn {
@@ -43,6 +44,7 @@ size_t HandleImpl::alignment_requirement() const {
     return 32;
 }
 MEGDNN_SPECIALIZE_CREATE_OPERATOR(Elemwise)
+MEGDNN_SPECIALIZE_CREATE_OPERATOR(BatchedMatrixMulForward)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpragmas"
 #pragma GCC diagnostic ignored "-Winstantiation-after-specialization"
