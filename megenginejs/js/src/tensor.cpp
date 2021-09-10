@@ -150,8 +150,8 @@ void testJSBack(){
     wrapper->attach(t1id);
     wrapper->attach(t2id);
     wrapper->attach(biasid);
-    auto outid = wrapper->matmul(aid, bid, false, false);    
-    //auto outid = wrapper->conv2d(t1id, t2id, 1, 0);
+    auto outid = matmul(aid, bid, false, false);    
+    // auto outid = wrapper->conv2d(t1id, t2id, 1, 0);
     // wrapper->add_(outid, biasid);
 
     // wrapper->printTensor(outid);

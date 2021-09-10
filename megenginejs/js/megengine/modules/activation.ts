@@ -8,7 +8,7 @@ class _RELU extends Module{
     }
 
     forward(inp: Tensor){
-        let outID = ENGINE.engine.relu(inp.data);
+        let outID = ENGINE.wasm.relu(inp.data);
         let offset = ENGINE.getMemOffset(outID);
         let out = new Tensor(outID, ENGINE.getTensorShape(outID), offset);
         ENGINE.track(out);

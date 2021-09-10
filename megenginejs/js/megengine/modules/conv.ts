@@ -36,7 +36,7 @@ class _Conv2D extends Module{
     }
     
     forward(inp: Tensor): Tensor{
-        let outID = ENGINE.engine.conv2d(
+        let outID = ENGINE.wasm.conv2d(
             inp.data, this.weight.data, 
             this.stride, this.padding);
         let offset = ENGINE.getMemOffset(outID, inp.dtype);

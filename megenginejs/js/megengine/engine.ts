@@ -74,21 +74,21 @@ class Engine{
   rand(shape: number[], mean: number = 0.0, std: number = 1.0, dtype: DType = DType.float32): Tensor{
     let inferedShape = shape;
     const shapeBytes = new Int32Array(inferedShape);
-    let outid = this.engine.randn(shapeBytes, mean, std);
+    let outid = this.wasm.randn(shapeBytes, mean, std);
     return this.createTensor(outid, shape, dtype);
   }
 
   zeros(shape: number[], dtype: DType = DType.float32): Tensor{
     let inferedShape = shape;
     const shapeBytes = new Int32Array(inferedShape);
-    let outid = this.engine.zeros(shapeBytes, dtype);
+    let outid = this.wasm.zeros(shapeBytes, dtype);
     return this.createTensor(outid, shape, dtype);
   }
 
   ones(shape: number[], dtype: DType = DType.float32): Tensor{
     let inferedShape = shape;
     const shapeBytes = new Int32Array(inferedShape);
-    let outid = this.engine.ones(shapeBytes, dtype);
+    let outid = this.wasm.ones(shapeBytes, dtype);
     return this.createTensor(outid, shape, dtype);
   }
 
@@ -163,33 +163,33 @@ class Engine{
   add(a: Tensor | number, b: Tensor | number): Tensor{
     let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
     let tensorB: Tensor = (b instanceof Tensor) ? b : this.tensor([b]);
-    let outID = this.engine.add(tensorA.data, tensorB.data);
+    let outID = this.wasm.add(tensorA.data, tensorB.data);
     return this.createTensor(outID, this.getTensorShape(outID), tensorA.dtype);
   }
 
   sub(a: Tensor | number, b: Tensor | number): Tensor{
     let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
     let tensorB: Tensor = (b instanceof Tensor) ? b : this.tensor([b]);
-    let outID = this.engine.sub(tensorA.data, tensorB.data);
+    let outID = this.wasm.sub(tensorA.data, tensorB.data);
     return this.createTensor(outID, this.getTensorShape(outID), tensorA.dtype);
   }
 
   sub_(a: Tensor | number, b: Tensor | number){
     let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
     let tensorB: Tensor = (b instanceof Tensor) ? b : this.tensor([b]);
-    this.engine.sub_(tensorA.data, tensorB.data);
+    this.wasm.sub_(tensorA.data, tensorB.data);
   }
 
   add_(a: Tensor | number, b: Tensor | number){
     let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
     let tensorB: Tensor = (b instanceof Tensor) ? b : this.tensor([b]);
-    this.engine.add_(tensorA.data, tensorB.data);
+    this.wasm.add_(tensorA.data, tensorB.data);
   }
 
   mul(a: Tensor | number, b: Tensor | number): Tensor{
     let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
     let tensorB: Tensor = (b instanceof Tensor) ? b : this.tensor([b]);
-    let outID = this.engine.mul(tensorA.data, tensorB.data);
+    let outID = this.wasm.mul(tensorA.data, tensorB.data);
     return this.createTensor(outID, this.getTensorShape(outID), tensorA.dtype);
   }
   div(a: Tensor | number, b: Tensor | number): Tensor{
@@ -198,7 +198,7 @@ class Engine{
     if(tensorA.dtype !== DType.float32 || tensorB.dtype !== DType.float32){
       throw new Error(`oprands in div should has dtype float32`);
     }
-    let outID = this.engine.div(tensorA.data, tensorB.data);
+    let outID = this.wasm.div(tensorA.data, tensorB.data);
     return this.createTensor(outID, this.getTensorShape(outID), DType.float32);
   }
 
@@ -207,7 +207,7 @@ class Engine{
     let dimA = a.shape.length;
     let dimB = b.shape.length;
     if(dimA === 1 && dimB === 1){
-      let outID = this.engine.dot(a.data, b.data);
+      let outID = this.wasm.dot(a.data, b.data);
       return this.createTensor(outID, this.getTensorShape(outID), a.dtype);
     }
     let tensorA: Tensor = a;
@@ -250,7 +250,7 @@ class Engine{
           tensorA = this.reshape(tensorA, [-1].concat(shapeA.slice(-2)));
           tensorB = this.reshape(tensorB, [-1].concat(shapeB.slice(-2)));
         }
-        let outID = this.engine.batch_matmul(tensorA.data, tensorB.data, transposeA, transposeB);
+        let outID = this.wasm.batch_matmul(tensorA.data, tensorB.data, transposeA, transposeB);
         let out = this.createTensor(outID, this.getTensorShape(outID), tensorA.dtype);
         if(maxdim > 3){
           out = this.reshape(out, batchShape.concat(out.shape.slice(-2)));
@@ -264,8 +264,11 @@ class Engine{
         return out;
       }
       else{
-        let outID = this.engine.matmul(tensorA.data, tensorB.data, transposeA, transposeB);
+        tensorA = this.unsqueeze(tensorA, 0);
+        tensorB = this.unsqueeze(tensorB, 0);
+        let outID = this.wasm.batch_matmul(tensorA.data, tensorB.data, transposeA, transposeB);
         let out = this.createTensor(outID, this.getTensorShape(outID), tensorB.dtype);
+        out = this.squeeze(out, 0);
         if(removeRow){
           out = this.squeeze(out, -2);
         }
@@ -278,24 +281,24 @@ class Engine{
   }
 
   sin(a: Tensor): Tensor{
-    let outID = this.engine.sin(a.data);
+    let outID = this.wasm.sin(a.data);
     return this.createTensor(outID, this.getTensorShape(outID), a.dtype);
   }
 
   eq(a: Tensor | number, b: Tensor | number): Tensor{
     let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
     let tensorB: Tensor = (b instanceof Tensor) ? b : this.tensor([b]);
-    let outID = this.engine.eq(tensorA.data, tensorB.data);
+    let outID = this.wasm.eq(tensorA.data, tensorB.data);
     return this.createTensor(outID, this.getTensorShape(outID), tensorA.dtype);
   }
 
   log(a: Tensor): Tensor{
-    let outID = this.engine.log(a.data);
+    let outID = this.wasm.log(a.data);
     return this.createTensor(outID, this.getTensorShape(outID), a.dtype);;
   }
 
   cos(a: Tensor): Tensor{
-    let outID = this.engine.cos(a.data);
+    let outID = this.wasm.cos(a.data);
     return this.createTensor(outID, this.getTensorShape(outID), a.dtype);
   }
   mean(a: Tensor, axis?: number, keepdims=false): Tensor{
@@ -316,18 +319,18 @@ class Engine{
   }
 
   relu(a: Tensor): Tensor{
-    let outID = this.engine.relu(a.data);
+    let outID = this.wasm.relu(a.data);
     return this.createTensor(outID, this.getTensorShape(outID), a.dtype);
   }
 
   exp(a: Tensor): Tensor{
-    let outID = this.engine.exp(a.data);
+    let outID = this.wasm.exp(a.data);
     return this.createTensor(outID, this.getTensorShape(outID), a.dtype);
   }
 
   broadcast_to(a: Tensor, shape: number[]): Tensor{
     let tensorA: Tensor = (a instanceof Tensor) ? a : this.tensor([a]);
-    let outID = this.engine.broadcast_to(tensorA.data, shape);
+    let outID = this.wasm.broadcast_to(tensorA.data, shape);
     return this.createTensor(outID, this.getTensorShape(outID), tensorA.dtype);
   }
 
@@ -347,7 +350,7 @@ class Engine{
       if((unspec_axis === undefined) && inferSizeFromShape(shape) !== inferSizeFromShape(a.shape)){
         throw new Error(`the shape of tensor mismatch, expect ${inferSizeFromShape(shape)}, get ${inferSizeFromShape(a.shape)}`);
       }
-      let outID = this.engine.reshape(a.data, shape, (unspec_axis === undefined) ? -1 : unspec_axis);
+      let outID = this.wasm.reshape(a.data, shape, (unspec_axis === undefined) ? -1 : unspec_axis);
       return this.createTensor(outID, this.getTensorShape(outID), a.dtype);
   }
 
@@ -360,12 +363,12 @@ class Engine{
     let ax = axis.map((value, index) => {
         return value - index;
     });
-    let outID = this.engine.removeAxis(a.data, ax);
+    let outID = this.wasm.removeAxis(a.data, ax);
     return this.createTensor(outID, this.getTensorShape(outID), a.dtype);
   }
 
   addAxis(a: Tensor, axis: number[]){
-    let outID = this.engine.addAxis(a.data, axis);
+    let outID = this.wasm.addAxis(a.data, axis);
     return this.createTensor(outID, this.getTensorShape(outID), a.dtype);
   }
 
@@ -401,11 +404,11 @@ class Engine{
             if(keepdims){
                 throw Error("can not set axis=null and keepdims=true");
             }
-            let outID = this.engine.reduce(fla.data, mode, 0);
+            let outID = this.wasm.reduce(fla.data, mode, 0);
             return this.createTensor(outID, this.getTensorShape(outID), a.dtype);
         }
         else{
-            let outID = this.engine.reduce(a.data, mode, axis);
+            let outID = this.wasm.reduce(a.data, mode, axis);
             let out = this.createTensor(outID, this.getTensorShape(outID), a.dtype);
             if(!keepdims){
                 let axis: number[] = [];
@@ -426,7 +429,7 @@ class Engine{
   }
 
   index_one_hot(t: Tensor, index: Tensor, axis: number = 1, keepdims: boolean = false){
-    let outID = this.engine.index_one_hot(t.data, index.data, axis);
+    let outID = this.wasm.index_one_hot(t.data, index.data, axis);
     let out = this.createTensor(outID, this.getTensorShape(outID), t.dtype);
     if(keepdims){
         return out;
@@ -456,7 +459,7 @@ class Engine{
           return t;
       }
       else{
-        let outID = this.engine.astype(t.data, dtype);
+        let outID = this.wasm.astype(t.data, dtype);
         return this.createTensor(outID, this.getTensorShape(outID), dtype);
       }
   }
@@ -467,11 +470,11 @@ class Engine{
             throw Error("can not set axis=null and keepdims=true");
         }
         let flatten = this.flattern(t);
-        let outID = this.engine.argmax(flatten.data, 0);
+        let outID = this.wasm.argmax(flatten.data, 0);
         return this.createTensor(outID, this.getTensorShape(outID), t.dtype);
     }
     else{
-        let outID = this.engine.argmax(t.data, axis);
+        let outID = this.wasm.argmax(t.data, axis);
         // output dtype must be int32 not t.dtype
         let out = this.createTensor(outID, this.getTensorShape(outID), DType.int32);
         if(keepdims){

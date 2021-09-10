@@ -17,7 +17,7 @@ class _Pool2D extends Module{
     }
 
     forward(inp: Tensor){
-        let outID = ENGINE.engine.pool(
+        let outID = ENGINE.wasm.pool(
             inp.data, this.kernel_size, this.stride, this.padding, this.mode);
         let offset = ENGINE.getMemOffset(outID);
         let out = new Tensor(outID, ENGINE.getTensorShape(outID), offset);
