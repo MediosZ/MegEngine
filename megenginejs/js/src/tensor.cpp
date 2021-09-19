@@ -136,10 +136,18 @@ void testJSBack(){
     auto aid = wrapper->registerTensor(a);
     auto bid = wrapper->registerTensor(b);
     
+    auto t1 = randTensor({50, 1, 28, 28});
+    auto t2 = randTensor({6, 1, 5, 5});
+    auto bias = randTensor({1, 6, 1, 1});
+    auto t1id = wrapper->registerTensor(t1);
+    auto t2id = wrapper->registerTensor(t2);
+    auto biasid = wrapper->registerTensor(bias);
+
     wrapper->startScope();
-    wrapper->attach(aid);
-    wrapper->attach(bid);
-    auto outid = wrapper->batch_matmul(aid, bid, false, false);
+    // wrapper->attach(aid);
+    // wrapper->attach(bid);
+    // auto outid = wrapper->batch_matmul(aid, bid, false, false);
+    auto outid = wrapper->conv2d(t1id, t2id, 1, 0);
     // auto addid = wrapper->add(aid, bid);
     // wrapper->backward(outid);
     wrapper->endScope();

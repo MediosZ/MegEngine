@@ -19,6 +19,20 @@
 namespace megdnn {
 namespace wasm {
 
+class MatrixMulImpl::AlgoXNNPACK final : public AlgoBase {
+public:
+    const char* name() const override { return "WASM_XNNPACK"; }
+    bool usable(const KernSizeParam&) const override;
+    size_t get_workspace(const KernSizeParam&) const override { return 0; };
+    kern_t get_kern(const KernSizeParam&) const override;
+    PackMode packmode() const override { return PackMode::NO_PACK; }
+    AlgoAttribute attribute() const override {
+        return AlgoAttribute::REPRODUCIBLE | AlgoAttribute::NAIVE;
+    }
+    MEGDNN_DECL_ALGO_TYPE(WASM_XNNPACK)
+    MEGDNN_OVERRIDE_MATMUL_DESC(8, 16, 1, 4, AlgoDataType::FLOAT32, DEFAULT)
+};
+
 class MatrixMulImpl::AlgoF32K8x12x1 final : public AlgoBase {
 public:
     const char* name() const override { return "WASM_F32_K8X12X1"; }

@@ -20,6 +20,7 @@
 #include "src/naive/handle.h"
 #include "src/naive/matrix_mul/opr_impl.h"
 #include "src/common/algo_chooser.h"
+#include <iostream>
 using namespace megdnn;
 using namespace wasm;
 
@@ -27,11 +28,13 @@ class MatrixMulImpl::AlgoPack : NonCopyableObj {
     AlgoF32K8x12x1 f32_k8x12x1;
     AlgoGemv gemv;
     AlgoNaive naive;
+    AlgoXNNPACK xnnpack;
     SmallVector<AlgoBase*> m_all_algos;
     AlgoBase::Mapper m_all_algos_map;
 
 public:
     AlgoPack() {
+        m_all_algos.emplace_back(&xnnpack);
         m_all_algos.emplace_back(&gemv);
         m_all_algos.emplace_back(&f32_k8x12x1);
         m_all_algos.emplace_back(&naive);
@@ -210,51 +213,18 @@ size_t MatrixMulImpl::get_workspace_in_bytes(const TensorLayout& A,
 void MatrixMulImpl::exec(_megdnn_tensor_in A, _megdnn_tensor_in B,
                          _megdnn_tensor_out C, _megdnn_workspace workspace) {
     check_exec(A.layout, B.layout, C.layout, workspace.size);
-    auto p = param();
-    if(!p.transposeA && !p.transposeB){
-        float output_min = -std::numeric_limits<float>::infinity();
-        float output_max = std::numeric_limits<float>::infinity();
-        const size_t input_channels = B.layout.shape[0];
-        const size_t output_channels = B.layout.shape[1];
-        const size_t input_stride = input_channels;
-        const size_t output_stride = output_channels;
-
-        xnn_operator_t fully_connected_op = nullptr;
-        const uint32_t flags = XNN_FLAG_TRANSPOSE_WEIGHTS;
-        xnn_status status = xnn_create_fully_connected_nc_f32(
-            input_channels, output_channels, input_stride, output_stride, B.ptr<dt_float32>(),
-            nullptr, output_min, output_max, flags, &fully_connected_op);
-        if (status != xnn_status_success) {
-            megdnn_throw(ssprintf(
-                "XNN status for xnn_create_fully_connected_nc_f32 is not successful. "
-                "Got status %d. Use -c dbg to see XNN logs.",
-                status));
-        }
-        const size_t batch_size = A.layout.shape[0];
-        status = xnn_setup_fully_connected_nc_f32(fully_connected_op, batch_size, 
-                                        A.ptr<dt_float32>(), C.ptr<dt_float32>(), nullptr);
-        if (status != xnn_status_success) {
-            megdnn_throw(ssprintf(
-                "XNN status for xnn_setup_fully_connected_nc_f32 is not successful. "
-                "Got status %d. Use -c dbg to see XNN logs.",
-                status));
-        }
-
-        xnn_run_operator(fully_connected_op, nullptr);
-        return;
-    }
-    
     if (auto algo = get_algorithm_heuristic(A.layout, B.layout, C.layout,
                                             std::numeric_limits<size_t>::max(),
                                             AlgoAttribute::DEFAULT,
                                             AlgoAttribute::DEFAULT)) {
+        // std::cout << "matmul exec: " << algo->name() << std::endl;
         auto kern_param = make_kern_param(A, B, C, workspace);
         auto kern = static_cast<AlgoBase*>(algo)->get_kern(kern_param);
         auto run = [kern, kern_param]() { kern(kern_param); };
         static_cast<naive::HandleImpl*>(handle())->dispatch_kern(run);
         return;
     }
-    
+    // megdnn_throw("matmul exec fallback to naive");
     naive::MatrixMulForwardImpl::exec(A, B, C, workspace);
 }
 

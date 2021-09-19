@@ -111,6 +111,7 @@ public:
             WASM_F32K8x12x1 = 1 << 0,
             WASM_GEMV,
             WASM_NAIVE,
+            WASM_XNNPACK,
         };
 
         enum class AlgoSet : uint32_t {
@@ -173,6 +174,7 @@ private:
     class AlgoF32K8x12x1;  // WASM F32 Kernel 8x12x1
     class AlgoGemv;
     class AlgoNaive;
+    class AlgoXNNPACK;
     class AlgoPack;
     //! maintain all the algos of in the opr of wasm
     static const AlgoPack& algo_pack();

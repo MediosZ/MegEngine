@@ -15,6 +15,8 @@
 #include "src/wasm/elemwise/opr_impl.h"
 #include "src/wasm/batched_matrix_mul/opr_impl.h"
 #include "src/wasm/matrix_mul/opr_impl.h"
+#include "src/wasm/convolution/opr_impl.h"
+#include "src/wasm/conv_bias/opr_impl.h"
 #include <iostream>
 
 namespace megdnn {
@@ -47,6 +49,8 @@ size_t HandleImpl::alignment_requirement() const {
 MEGDNN_SPECIALIZE_CREATE_OPERATOR(Elemwise)
 MEGDNN_SPECIALIZE_CREATE_OPERATOR(BatchedMatrixMulForward)
 MEGDNN_SPECIALIZE_CREATE_OPERATOR(MatrixMul)
+MEGDNN_SPECIALIZE_CREATE_OPERATOR(Convolution)
+MEGDNN_SPECIALIZE_CREATE_OPERATOR(ConvBias)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpragmas"
 #pragma GCC diagnostic ignored "-Winstantiation-after-specialization"

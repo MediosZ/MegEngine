@@ -67,12 +67,6 @@ bool ElemwiseImpl::exec_binary() {
 
     auto elparam = make_elemwise_op_param<2>();
     auto &src0 = elparam[0], &src1 = elparam[1];
-    /* why shape changes?
-    std::cout << (*m_src)[0].layout.to_string() << std::endl;
-    std::cout << (*m_src)[1].layout.to_string() << std::endl;
-    std::cout << src0.layout.to_string() << std::endl;
-    std::cout << src1.layout.to_string() << std::endl;
-    */
     if (src0.layout.dtype != dtype::Float32{}) {
         return false;
     }

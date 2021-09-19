@@ -45,6 +45,41 @@ void f32_8x12x1_kern(const MatrixMulImpl::KernParam& kern_param) {
     MIDOUT_END();
 }
 
+void xnnpack_kern(const MatrixMulImpl::KernParam& kern_param) {
+    MIDOUT_BEGIN(megdnn_wasm_matmul_f32_kern, void) {
+        float output_min = -std::numeric_limits<float>::infinity();
+        float output_max = std::numeric_limits<float>::infinity();
+        const size_t input_channels = kern_param.K; // B.layout.shape[0];
+        const size_t output_channels = kern_param.N; // B.layout.shape[1];
+        const size_t input_stride = input_channels;
+        const size_t output_stride = output_channels;
+
+        xnn_operator_t fully_connected_op = nullptr;
+        const uint32_t flags = XNN_FLAG_TRANSPOSE_WEIGHTS;
+        xnn_status status = xnn_create_fully_connected_nc_f32(
+            input_channels, output_channels, input_stride, output_stride, kern_param.B<dt_float32>(),
+            nullptr, output_min, output_max, flags, &fully_connected_op);
+        if (status != xnn_status_success) {
+            megdnn_throw(ssprintf(
+                "XNN status for xnn_create_fully_connected_nc_f32 is not successful. "
+                "Got status %d. Use -c dbg to see XNN logs.",
+                status));
+        }
+        const size_t batch_size = kern_param.M; // A.layout.shape[0];
+        status = xnn_setup_fully_connected_nc_f32(fully_connected_op, batch_size, 
+                                        kern_param.A<dt_float32>(), kern_param.C<dt_float32>(), nullptr);
+        if (status != xnn_status_success) {
+            megdnn_throw(ssprintf(
+                "XNN status for xnn_setup_fully_connected_nc_f32 is not successful. "
+                "Got status %d. Use -c dbg to see XNN logs.",
+                status));
+        }
+        xnn_run_operator(fully_connected_op, nullptr);
+    }
+    MIDOUT_END();
+}
+
+
 void kern_naive(const MatrixMulImpl::KernParam& kern_param) {
     MIDOUT_BEGIN(megdnn_wasm_matmul_naive, void) {
         size_t M = kern_param.M, N = kern_param.N, K = kern_param.K;
@@ -89,6 +124,25 @@ void kern_naive(const MatrixMulImpl::KernParam& kern_param) {
 
 }
 }  // anonymous namespace
+
+
+////////////////////// AlgoXNNPACK ///////////////////////////
+
+bool MatrixMulImpl::AlgoXNNPACK::usable(
+        const KernSizeParam& kern_size_param) const {
+    return kern_size_param.compute_mode ==
+                   param::MatrixMul::ComputeMode::DEFAULT &&
+           kern_size_param.format == param::MatrixMul::Format::DEFAULT &&
+           kern_size_param.B_type == dtype::Float32{} &&
+           kern_size_param.C_type == dtype::Float32{} &&
+           kern_size_param.A_type == dtype::Float32{};
+}
+
+MatrixMulImpl::kern_t MatrixMulImpl::AlgoXNNPACK::get_kern(
+        const KernSizeParam&) const {
+    return xnnpack_kern;
+}
+
 
 ////////////////////// AlgoF32K8x12x1 ///////////////////////////
 
