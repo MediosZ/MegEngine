@@ -135,7 +135,9 @@ bool MatrixMulImpl::AlgoXNNPACK::usable(
            kern_size_param.format == param::MatrixMul::Format::DEFAULT &&
            kern_size_param.B_type == dtype::Float32{} &&
            kern_size_param.C_type == dtype::Float32{} &&
-           kern_size_param.A_type == dtype::Float32{};
+           kern_size_param.A_type == dtype::Float32{} && 
+           kern_size_param.trA == false &&
+           kern_size_param.trB == false;
 }
 
 MatrixMulImpl::kern_t MatrixMulImpl::AlgoXNNPACK::get_kern(

@@ -48,25 +48,25 @@ TEST_F(WASM, MATRIX_MUL) {
 
 TEST_F(WASM, MATRIX_MUL_NAIVE_MK4) {
     matrix_mul::check_matrix_mul(dtype::Float32{}, dtype::Float32{},
-                                 dtype::Float32{}, handle(), "FB_NAIVE",
+                                 dtype::Float32{}, handle(), "WASM_NAIVE",
                                  param::MatrixMul::Format::MK4, 1);
 }
 
 TEST_F(WASM, MATRIX_MUL_NAIVE_MK8) {
     matrix_mul::check_matrix_mul(dtype::Float32{}, dtype::Float32{},
-                                 dtype::Float32{}, handle(), "FB_NAIVE",
+                                 dtype::Float32{}, handle(), "WASM_NAIVE",
                                  param::MatrixMul::Format::MK8, 1);
 }
 
 TEST_F(WASM, MATRIX_MUL_NAIVE_MK4_DOT) {
     matrix_mul::check_matrix_mul(dtype::Float32{}, dtype::Float32{},
-                                 dtype::Float32{}, handle(), "FB_NAIVE",
+                                 dtype::Float32{}, handle(), "WASM_NAIVE",
                                  param::MatrixMul::Format::MK4_DOT, 1);
 }
 
 TEST_F(WASM, MATRIX_MUL_NAIVE) {
     Checker<MatrixMul> checker(handle());
-    checker.set_before_exec_callback(AlgoChecker<MatrixMul>("FB_NAIVE"));
+    checker.set_before_exec_callback(AlgoChecker<MatrixMul>("WASM_NAIVE"));
     using Param = MatrixMul::Param;
     auto args = matrix_mul::get_matmul_args();
     for (auto arg : args) {
