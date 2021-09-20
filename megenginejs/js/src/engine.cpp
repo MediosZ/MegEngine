@@ -283,7 +283,7 @@ int broadcast_to(int a, const emscripten::val &v){
     emscripten::val memoryView{emscripten::typed_memory_view(l, rv.data())};
     memoryView.call<void>("set", v);
     TensorShape shape = TensorShape{l};
-    auto cn = CompNode::load("cpu0");
+    auto cn = CompNode::load("cpu:default");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
     auto ptr = ret->ptr<int32_t>();
     for (uint32_t i=0; i<l; i++) {
@@ -298,7 +298,7 @@ int broadcast_to(int a, const emscripten::val &v){
     auto tensor = wrapper->getTensor(a);
     auto outTensor = js::apply(op, tensor.get(), shapeTensor.get())[0];
     auto id = wrapper->registerTensor(outTensor);
-    return id; ;
+    return id;
 }
 
 int removeAxis(int a, const emscripten::val &v){
