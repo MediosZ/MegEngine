@@ -19,19 +19,8 @@
 
 #include "megdnn/opr_param_defs.h"
 #include "src/naive/convolution/helper.h"
-
+#include "src/wasm/conv_bias/im2col/postprocess_helper.h"
 #include "src/wasm/matrix_mul/gemv.h"
-#if MEGDNN_X86
-#include "src/x86/conv_bias/postprocess_helper.h"
-#elif (MEGDNN_ARMV7 || MEGDNN_AARCH64)
-#include "src/arm_common/conv_bias/postprocess_helper.h"
-#include "src/arm_common/matrix_mul/fp16/hgemv.h"
-#include "src/arm_common/matrix_mul/fp32/exec_sgemv.h"
-#include "src/arm_common/matrix_mul/int8/gemv.h"
-#else
-#include "src/common/postprocess_helper.h"
-#endif
-
 #include "midout.h"
 MIDOUT_DECL(megdnn_wasm_conv1x1_gemv)
 

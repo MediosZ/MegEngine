@@ -14,15 +14,7 @@
 
 #include "src/wasm/conv_bias/opr_impl.h"
 #include "src/wasm/conv_bias/conv1x1/conv1x1_utils.h"
-
-#if MEGDNN_X86
-#include "src/x86/conv_bias/postprocess_helper.h"
-#elif (MEGDNN_ARMV7 || MEGDNN_AARCH64)
-#include "src/arm_common/conv_bias/postprocess_helper.h"
-#else
-#include "src/common/postprocess_helper.h"
-#endif
-
+#include "src/wasm/conv_bias/im2col/postprocess_helper.h"
 namespace megdnn {
 namespace wasm {
 namespace conv1x1 {

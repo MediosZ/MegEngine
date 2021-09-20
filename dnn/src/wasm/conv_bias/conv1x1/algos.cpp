@@ -19,15 +19,6 @@
 
 #include "megdnn/opr_param_defs.h"
 #include "src/naive/convolution/helper.h"
-
-#if MEGDNN_X86
-#include "src/x86/conv_bias/postprocess_helper.h"
-#elif (MEGDNN_ARMV7 || MEGDNN_AARCH64)
-#include "src/arm_common/conv_bias/postprocess_helper.h"
-#else
-#include "src/common/postprocess_helper.h"
-#endif
-
 #include "midout.h"
 MIDOUT_DECL(megdnn_wasm_conv1x1)
 

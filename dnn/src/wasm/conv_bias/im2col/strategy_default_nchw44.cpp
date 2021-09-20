@@ -10,18 +10,9 @@
  */
 #include "src/wasm/conv_bias/im2col/strategy_base.h"
 #include "src/wasm/convolution/img2col_helper.h"
-#if MEGDNN_X86
-#include "src/x86/conv_bias/postprocess_helper.h"
-#elif (MEGDNN_ARMV7 || MEGDNN_AARCH64)
-#include "src/arm_common/conv_bias/postprocess_helper.h"
-#else
-#include "src/common/postprocess_helper.h"
-#endif
 
 using namespace megdnn;
-#if MEGDNN_X86
-using namespace x86;
-#endif
+
 namespace megdnn {
 
 template <typename src_ctype, typename bias_ctype, typename dst_ctype,
