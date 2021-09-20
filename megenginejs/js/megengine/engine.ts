@@ -264,11 +264,8 @@ class Engine{
         return out;
       }
       else{
-        tensorA = this.unsqueeze(tensorA, 0);
-        tensorB = this.unsqueeze(tensorB, 0);
-        let outID = this.wasm.batch_matmul(tensorA.data, tensorB.data, transposeA, transposeB);
+        let outID = this.wasm.matmul(tensorA.data, tensorB.data, transposeA, transposeB);
         let out = this.createTensor(outID, this.getTensorShape(outID), tensorB.dtype);
-        out = this.squeeze(out, 0);
         if(removeRow){
           out = this.squeeze(out, -2);
         }

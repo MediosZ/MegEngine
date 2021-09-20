@@ -177,9 +177,10 @@ void testJSBack(){
 
 
 } // namespace
-
+#ifndef __EMSCRIPTEN__
 int main(){
     mgb_log("main function");
     // mgb::imperative::js::initTensor();
     // mgb::imperative::js::testJSBack();
 }
+#endif
