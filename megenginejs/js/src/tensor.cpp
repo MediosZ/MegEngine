@@ -147,7 +147,7 @@ void testJSBack(){
     // wrapper->attach(aid);
     // wrapper->attach(bid);
     // auto outid = wrapper->batch_matmul(aid, bid, false, false);
-    auto outid = wrapper->conv2d(t1id, t2id, 1, 0);
+    auto outid = conv2d(t1id, t2id, 1, 0);
     // auto addid = wrapper->add(aid, bid);
     // wrapper->backward(outid);
     wrapper->endScope();
