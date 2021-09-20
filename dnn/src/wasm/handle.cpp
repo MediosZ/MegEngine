@@ -6,40 +6,58 @@
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or
- * implied.
+ * "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
-#include "src/wasm/handle.h"
-
 #include "src/common/handle_impl.h"
-
-// #include "src/wasm/elemwise/opr_impl.h"
-static size_t g_image2d_pitch_alignment = 1;
+#include "src/common/version_symbol.h"
+#include "src/wasm/handle.h"
+#include "src/wasm/elemwise/opr_impl.h"
+#include "src/wasm/batched_matrix_mul/opr_impl.h"
+#include "src/wasm/matrix_mul/opr_impl.h"
+#include "src/wasm/convolution/opr_impl.h"
+#include "src/wasm/conv_bias/opr_impl.h"
+#include <iostream>
 
 namespace megdnn {
 namespace wasm {
 
+template <typename Opr>
+std::unique_ptr<Opr> HandleImpl::create_operator() {
+    return fallback::HandleImpl::create_operator<Opr>();
+}
+
 HandleImpl::HandleImpl(megcoreComputingHandle_t computing_handle,
                        HandleType type)
-        : HandleImplHelper(computing_handle, type),
-          m_dispatcher{megcoreGetCPUDispatcher(computing_handle)} {}
-
-size_t HandleImpl::image2d_pitch_alignment() const {
-    return g_image2d_pitch_alignment;
+        : fallback::HandleImpl::HandleImpl(computing_handle, type) {
+    auto status = xnn_initialize(nullptr);
+    if(status != xnn_status_success) {
+        megdnn_throw("unable to initialize xnnpack");
+    }
 }
 
-HandleImpl::HandleVendorType HandleImpl::vendor_type() const {
-    return HandleVendorType::NOT_SPEC;
+HandleImpl::~HandleImpl() {
+    auto status = xnn_deinitialize();
+    if(status != xnn_status_success) {
+        megdnn_throw("unable to deinitialize xnnpack");
+    }
 }
 
-size_t HandleImpl::exchange_image2d_pitch_alignment(size_t alignment) {
-    auto ret = g_image2d_pitch_alignment;
-    g_image2d_pitch_alignment = alignment;
-    return ret;
+size_t HandleImpl::alignment_requirement() const {
+    return 32;
 }
-MEGDNN_FOREACH_OPR_CLASS(MEGDNN_SPECIALIZE_CREATE_OPERATOR)
+MEGDNN_SPECIALIZE_CREATE_OPERATOR(Elemwise)
+MEGDNN_SPECIALIZE_CREATE_OPERATOR(BatchedMatrixMulForward)
+MEGDNN_SPECIALIZE_CREATE_OPERATOR(MatrixMul)
+MEGDNN_SPECIALIZE_CREATE_OPERATOR(Convolution)
+MEGDNN_SPECIALIZE_CREATE_OPERATOR(ConvBias)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpragmas"
+#pragma GCC diagnostic ignored "-Winstantiation-after-specialization"
+MEGDNN_FOREACH_OPR_CLASS(MEGDNN_INST_CREATE_OPERATOR)
+#pragma GCC diagnostic pop
 
 }  // namespace wasm
 }  // namespace megdnn
+
 // vim: syntax=cpp.doxygen

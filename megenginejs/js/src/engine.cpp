@@ -110,7 +110,7 @@ int EngineWrapper::replaceTensorWithDataEM(int a, const emscripten::val &v, cons
     auto rv = getVectorFromVal(v);
     TensorShape shape = TensorShape(rv);
     
-    auto cn = CompNode::load("cpu0");
+    auto cn = CompNode::load("cpu:default");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, getDataType(type));
     assignData(data, ret, type);
 
@@ -128,7 +128,7 @@ int EngineWrapper::registerTensorEM(const emscripten::val &v, const emscripten::
     auto rv = getVectorFromVal(v);
     TensorShape shape = TensorShape(rv);
     
-    auto cn = CompNode::load("cpu0");
+    auto cn = CompNode::load("cpu:default");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, getDataType(type));
     assignData(data, ret, type);
     auto handle = interpreter_for_js->put(*ret, true);
@@ -143,7 +143,7 @@ int randn(const emscripten::val &v, const float mean, const float std){
     const auto l = v["length"].as<unsigned>();
     TensorShape shape = TensorShape{l};
     auto seed = rand();
-    auto cn = CompNode::load("cpu0");
+    auto cn = CompNode::load("cpu:default");
     auto rngHandle = rng::new_handle(cn, seed);
     auto op = GaussianRNG::make(seed, mean, std, dtype::Float32(), rngHandle);
     
@@ -169,7 +169,7 @@ int zeros(const emscripten::val &v, int data_type = 0){
     auto rv = getVectorFromVal(v);
     TensorShape shape = TensorShape(rv);
 
-    auto cn = CompNode::load("cpu0");
+    auto cn = CompNode::load("cpu:default");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, getDataType(data_type));
     if(data_type == 0){
         auto ptr = ret->ptr<float>();
@@ -212,7 +212,7 @@ int ones(const emscripten::val &v, int data_type = 0){
     auto rv = getVectorFromVal(v);
     TensorShape shape = TensorShape(rv);
     
-    auto cn = CompNode::load("cpu0");
+    auto cn = CompNode::load("cpu:default");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, getDataType(data_type));
     if(data_type == 0){
         auto ptr = ret->ptr<float>();
@@ -257,7 +257,7 @@ int reshape(int a, const emscripten::val &v, int unspec){
     emscripten::val memoryView{emscripten::typed_memory_view(l, rv.data())};
     memoryView.call<void>("set", v);
     TensorShape shape = TensorShape{l};
-    auto cn = CompNode::load("cpu0");
+    auto cn = CompNode::load("cpu:default");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
     auto ptr = ret->ptr<int32_t>();
     for (uint32_t i=0; i<l; i++) {

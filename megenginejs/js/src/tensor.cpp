@@ -101,7 +101,7 @@ apply_result_t apply(ApplyContext& ctx) {
 
 std::shared_ptr<Tensor> randTensor(std::initializer_list<int> init_list){
     TensorShape shape = TensorShape{init_list.size()};
-    auto cn = CompNode::load("cpu0");
+    auto cn = CompNode::load("cpu:default");
     std::shared_ptr<HostTensorND> ret = std::make_shared<HostTensorND>(cn, shape, dtype::Int32());
     auto ptr = ret->ptr<int32_t>();
     int count{0};
@@ -131,47 +131,27 @@ void initTensor(){
 
 void testJSBack(){
     auto wrapper = EngineWrapperInst();
+    auto a = randTensor({5, 8, 8});
+    auto b = randTensor({5, 8, 8});
+    auto aid = wrapper->registerTensor(a);
+    auto bid = wrapper->registerTensor(b);
     
     auto t1 = randTensor({50, 1, 28, 28});
     auto t2 = randTensor({6, 1, 5, 5});
     auto bias = randTensor({1, 6, 1, 1});
-    auto a = randTensor({8, 8});
-    auto b = randTensor({8, 6});
-    auto aid = wrapper->registerTensor(a);
-    auto bid = wrapper->registerTensor(b);
     auto t1id = wrapper->registerTensor(t1);
     auto t2id = wrapper->registerTensor(t2);
     auto biasid = wrapper->registerTensor(bias);
-    mgb_log("register tensor %d, %d", t1id, t2id);
-    
+
     wrapper->startScope();
-    wrapper->attach(aid);
-    wrapper->attach(bid);
-    wrapper->attach(t1id);
-    wrapper->attach(t2id);
-    wrapper->attach(biasid);
-    auto outid = matmul(aid, bid, false, false);    
-    // auto outid = wrapper->conv2d(t1id, t2id, 1, 0);
-    // wrapper->add_(outid, biasid);
-
-    // wrapper->printTensor(outid);
-    // wrapper->printTensor(t2id);
-    // auto offset = wrapper->getTensorOffset(t2id, 0);
-    // mgb_log("offset %p", offset);
-    // wrapper->printTensor(outid);
-    // wrapper->printTensor(meanid);
-
-    wrapper->backward(outid);
+    // wrapper->attach(aid);
+    // wrapper->attach(bid);
+    // auto outid = wrapper->batch_matmul(aid, bid, false, false);
+    auto outid = wrapper->conv2d(t1id, t2id, 1, 0);
+    // auto addid = wrapper->add(aid, bid);
+    // wrapper->backward(outid);
     wrapper->endScope();
-
-    // wrapper->printGrad(t1id);
-    // wrapper->printGrad(t2id);
-    // interpreter_for_js->del(t2->m_handle.get());
-    // wrapper->disposeTensor(outid);
-    // auto tensor = wrapper->getTensor(meanid);
-    // interpreter_for_js->del(tensor->m_handle.get());
     interpreter_for_js->sync();
-    // delete wrapper;
 }
 
 
@@ -179,8 +159,12 @@ void testJSBack(){
 } // namespace
 #ifndef __EMSCRIPTEN__
 int main(){
+    mgb::imperative::js::initTensor();
     mgb_log("main function");
-    // mgb::imperative::js::initTensor();
-    // mgb::imperative::js::testJSBack();
+    
+    mgb::imperative::js::testJSBack();
+    
+    mgb_log("main function end");
+    return 0;
 }
 #endif

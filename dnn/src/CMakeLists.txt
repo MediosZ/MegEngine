@@ -4,17 +4,14 @@ file(GLOB_RECURSE SOURCES common/*.cpp naive/*.cpp)
 # Build configure
 list(APPEND SOURCES ${PROJECT_BINARY_DIR}/genfiles/megbrain_build_config.h)
 
-if(${MGE_ARCH} STREQUAL "wasm")
-    file(GLOB_RECURSE SOURCES_ wasm/*.cpp)
-    list(APPEND SOURCES ${SOURCES_})
-endif()
-
-
 if(NOT ${MGE_ARCH} STREQUAL "naive")
     file(GLOB_RECURSE SOURCES_ fallback/*.cpp)
     list(APPEND SOURCES ${SOURCES_})
     if(${MGE_ARCH} STREQUAL "fallback")
         message(WARNING "build only with fallback")
+    elseif(${MGE_ARCH} STREQUAL "wasm")
+        file(GLOB_RECURSE SOURCES_ wasm/*.cpp)
+        list(APPEND SOURCES ${SOURCES_})
     elseif(${MGE_ARCH} STREQUAL "x86_64" OR ${MGE_ARCH} STREQUAL "i386")
         file(GLOB_RECURSE SOURCES_ x86/*.cpp)
         list(APPEND SOURCES ${SOURCES_})

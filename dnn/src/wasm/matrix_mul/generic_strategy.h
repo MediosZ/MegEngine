@@ -1,5 +1,5 @@
 /**
- * \file dnn/src/wasm/handle.h
+ * \file dnn/src/wasm/matrix_mul/generic_strategy.h
  * MegEngine is Licensed under the Apache License, Version 2.0 (the "License")
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
@@ -9,25 +9,17 @@
  * "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 #pragma once
-#include "src/fallback/handle.h"
-#include <xnnpack.h>
+#include "src/wasm/matrix_mul/gemm_common.h"
+
 namespace megdnn {
+namespace matmul {
 namespace wasm {
 
-class HandleImpl : public fallback::HandleImpl {
-public:
-    HandleImpl(megcoreComputingHandle_t computing_handle,
-               HandleType type = HandleType::WASM);
-    ~HandleImpl() override;
-    
-    template <typename Opr>
-    std::unique_ptr<Opr> create_operator();
-
-    size_t alignment_requirement() const override;
-
-};
+MEGDNN_REG_GEMM_STRATEGY(float, float, float, 8, 12, 1, false, true,
+                         sgemm_8x12);
 
 }  // namespace wasm
+}  // namespace matmul
 }  // namespace megdnn
 
 // vim: syntax=cpp.doxygen

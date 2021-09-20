@@ -164,7 +164,7 @@ if(CMAKE_TOOLCHAIN_FILE)
     elseif(NOT "${ARM_CROSS_BUILD_ARCH}" STREQUAL "")
         set(MGE_ARCH ${ARM_CROSS_BUILD_ARCH})
     elseif(EMSCRIPTEN_ROOT_PATH)
-        set(MGE_ARCH "naive")
+        set(MGE_ARCH "wasm")
     else()
         message(FATAL_ERROR "Unknown cross-compiling settings.")
     endif()
@@ -173,7 +173,7 @@ endif()
 
 if(${MGE_ARCH} STREQUAL "AUTO")
     if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "AMD64")
-        set(MGE_ARCH "x86_64")
+        set(MGE_ARCH "wasm")
     elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "i386" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "i686")
         set(MGE_ARCH "i386")
     elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "arm64")
@@ -1082,7 +1082,7 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/megengine.pc
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
 # Do not export targets if MGE_WITH_DISTRIBUTED is on. MegRay is not ready.
-if (NOT MGE_WITH_DISTRIBUTED AND NOT MGE_BUILD_MEGJS)
+if (OFF AND NOT MGE_WITH_DISTRIBUTED AND NOT MGE_BUILD_MEGJS)
     include(CMakePackageConfigHelpers)
     set (MGE_INSTALL_CMAKEDIR ${CMAKE_INSTALL_LIBDIR}/cmake/MegEngine)
     configure_package_config_file(cmake/MegEngineConfig.cmake.in
