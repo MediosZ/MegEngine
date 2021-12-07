@@ -1,6 +1,6 @@
 import {WeightHandler} from "./weight_handler";
 import {StateDict } from "../modules/module";
-
+import {customFetch} from "../backend";
 
 export class FileHandler extends WeightHandler{
   model_path: string
@@ -21,8 +21,9 @@ export class FileHandler extends WeightHandler{
   }
 
   async load(path: string): Promise<StateDict>{
+    let _fetch = customFetch || fetch;
     return new Promise(async (resolve, reject) => {
-      let response = await fetch(path);
+      let response = await _fetch(path);
       if (!response.ok) {
         const message = `File at ${path} not found`;
         throw new Error(message);

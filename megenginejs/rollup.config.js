@@ -31,7 +31,7 @@ export default {
   plugins: [typescript(), resolve(), node({preferBuiltins: false}),
     // Polyfill require() from dependencies.
     commonjs({
-      ignore: ['crypto', 'node-fetch', 'util'],
+      ignore: ['crypto', 'node-fetch', 'util', 'fs', 'path', 'worker_threads', 'perf_hooks', 'os'],
       include: ['node_modules/**', 'wasm-out/**']
     }),
     terser({output: {preamble: "//wasm-sample", comments: false}, compress: {typeofs: false}}),

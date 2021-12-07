@@ -3,10 +3,12 @@ import {ENGINE} from "./engine";
 import {WasmModelExecutor} from "./wasm_dtypes";
 import {TensorInfo} from './tensor';
 import {inferShape, flatten} from './utils';
+import {customFetch} from "./backend";
 
 async function createFile(path: string): Promise<string> {
+    let _fetch = customFetch || fetch;
     return new Promise(async (resolve, reject) => {
-        const response = await fetch(path);
+        const response = await _fetch(path);
         if(!response.ok){
             reject(`An error has occured: ${response.status}`);
         }
